@@ -287,11 +287,12 @@ async def cb_decline(call: CallbackQuery):
     biz_id = d['biz_id'] or None
     try:
         await bot.edit_message_text(
-            "Оффер отклонён.",
+            f"Оффер на NFT <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a> отменён.",
             business_connection_id=biz_id,
             chat_id=d['chat_id'],
             message_id=d['offer_msg_id'],
-            reply_markup=None
+            reply_markup=None,
+            link_preview_options=LinkPreviewOptions(is_disabled=True)
         )
     except Exception as e:
         logging.error(f"edit decline: {e}")
