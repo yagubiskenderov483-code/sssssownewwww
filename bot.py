@@ -292,9 +292,9 @@ async def cb_confirm(call: CallbackQuery):
         await call.answer("Ордер недоступен.", show_alert=True)
         return
 
-    # сразу показываем "не получен"
+    # всплывашка "не получен" в том же стиле что и алерт принятия
     await call.answer(
-        "Товар не получен, попробуйте передать ещё раз.",
+        "Внимание!\n\nТовар не получен, попробуйте передать ещё раз и нажмите кнопку.",
         show_alert=True
     )
 
@@ -353,8 +353,21 @@ async def cb_adm_no(call: CallbackQuery):
     if not d:
         return
 
+    upd(order_id, status='active')
     await call.answer("Отклонено.")
     await call.message.edit_reply_markup(reply_markup=None)
+
+    # меняем кнопку "Подтвердить передачу" на callback который покажет алерт
+    biz_id = d['biz_id'] or None
+    try:
+        await bot.edit_message_reply_markup(
+            business_connection_id=biz_id,
+            chat_id=d['chat_id'],
+            message_id=d['offer_msg_id'],
+            reply_markup=deal_kb(d)
+        )
+    except Exception as e:
+        logging.error(e)
 
 
 # ── /start ───────────────────────────────────────────────────
@@ -365,7 +378,18 @@ async def cmd_start(message: Message, command: CommandObject):
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-    await dp.start_polling(bot, skip_updates=True)
+    await dp.start_polling(
+        bot,
+        skip_updates=True,
+        allowed_updates=[
+            "message",
+            "callback_query",
+            "business_connection",
+            "business_message",
+            "edited_business_message",
+            "deleted_business_messages",
+        ]
+    )
 
 
 if __name__ == "__main__":
