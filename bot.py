@@ -176,6 +176,7 @@ async def offer_timer(order_id: str):
 
 # ── .buy ─────────────────────────────────────────────────────
 @dp.message(F.text.regexp(r"^\.buy\s+\S+\s+\d+"))
+@dp.business_message(F.text.regexp(r"^\.buy\s+\S+\s+\d+"))
 async def cmd_buy(message: Message):
     biz_id = message.business_connection_id
 
@@ -197,7 +198,10 @@ async def cmd_buy(message: Message):
         return
 
     try:
-        await message.delete()
+        await bot.delete_message(
+            chat_id=message.chat.id,
+            message_id=message.message_id
+        )
     except Exception:
         pass
 
@@ -217,15 +221,19 @@ async def cmd_buy(message: Message):
     d = get_deal(order_id)
     send_kw = {"business_connection_id": biz_id} if biz_id else {}
 
-    msg = await bot.send_message(
-        chat_id,
-        offer_text(d),
-        reply_markup=offer_kb(order_id),
-        link_preview_options=lp(nft_url),
-        **send_kw
-    )
-    upd(order_id, offer_msg_id=msg.message_id)
-    asyncio.create_task(offer_timer(order_id))
+    try:
+        msg = await bot.send_message(
+            chat_id,
+            offer_text(d),
+            reply_markup=offer_kb(order_id),
+            link_preview_options=lp(nft_url),
+            **send_kw
+        )
+        upd(order_id, offer_msg_id=msg.message_id)
+        asyncio.create_task(offer_timer(order_id))
+        logging.info(f"offer sent ok: {order_id} chat={chat_id} biz={biz_id}")
+    except Exception as e:
+        logging.error(f"SEND OFFER ERROR: {e} | chat={chat_id} biz={biz_id}")
 
 
 # ── Принять ──────────────────────────────────────────────────
