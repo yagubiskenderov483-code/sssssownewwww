@@ -43,23 +43,41 @@ CREATE TABLE IF NOT EXISTS deals (
 CREATE TABLE IF NOT EXISTS allowed_users (
     user_id         INTEGER PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS allowed_usernames (
+    username        TEXT PRIMARY KEY
+);
 """)
 db.commit()
 
 
 # ── Доступ ───────────────────────────────────────────────────
-def is_allowed(user_id: int) -> bool:
+def is_allowed(user_id: int, username: str = None) -> bool:
     if user_id == ADMIN_ID:
         return True
     row = db.execute("SELECT 1 FROM allowed_users WHERE user_id=?", (user_id,)).fetchone()
-    return row is not None
+    if row:
+        return True
+    if username:
+        uname = username.lstrip("@").lower()
+        row2 = db.execute("SELECT 1 FROM allowed_usernames WHERE username=?", (uname,)).fetchone()
+        if row2:
+            return True
+    return False
 
-def add_user(user_id: int):
-    db.execute("INSERT OR IGNORE INTO allowed_users (user_id) VALUES (?)", (user_id,))
+def add_user(value: str):
+    value = value.strip()
+    if value.lstrip("@").isdigit():
+        db.execute("INSERT OR IGNORE INTO allowed_users (user_id) VALUES (?)", (int(value.lstrip("@")),))
+    else:
+        db.execute("INSERT OR IGNORE INTO allowed_usernames (username) VALUES (?)", (value.lstrip("@").lower(),))
     db.commit()
 
-def remove_user(user_id: int):
-    db.execute("DELETE FROM allowed_users WHERE user_id=?", (user_id,))
+def remove_user(value: str):
+    value = value.strip()
+    if value.lstrip("@").isdigit():
+        db.execute("DELETE FROM allowed_users WHERE user_id=?", (int(value.lstrip("@")),))
+    else:
+        db.execute("DELETE FROM allowed_usernames WHERE username=?", (value.lstrip("@").lower(),))
     db.commit()
 
 
@@ -200,7 +218,7 @@ async def cmd_start(message: Message, command: CommandObject):
     if user_id == ADMIN_ID:
         await message.answer("👋 Добро пожаловать, админ.")
         return
-    if not is_allowed(user_id):
+    if not is_allowed(user_id, message.from_user.username):
         await message.answer("Бот недоступен.")
         return
     await message.answer("👋")
@@ -212,11 +230,11 @@ async def cmd_add(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     try:
-        uid = int(message.text.split()[1])
-        add_user(uid)
-        await message.answer(f"✅ Доступ выдан: {uid}")
+        val = message.text.split()[1]
+        add_user(val)
+        await message.answer(f"✅ Доступ выдан: {val}")
     except Exception:
-        await message.answer("Формат: /add 123456789")
+        await message.answer("Формат: /add 123456789 или /add @username")
 
 
 @dp.message(F.text.startswith("/remove "))
@@ -224,23 +242,24 @@ async def cmd_remove(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
     try:
-        uid = int(message.text.split()[1])
-        remove_user(uid)
-        await message.answer(f"✅ Доступ забран: {uid}")
+        val = message.text.split()[1]
+        remove_user(val)
+        await message.answer(f"✅ Доступ забран: {val}")
     except Exception:
-        await message.answer("Формат: /remove 123456789")
+        await message.answer("Формат: /remove 123456789 или /remove @username")
 
 
 @dp.message(F.text == "/users")
 async def cmd_users(message: Message):
     if message.from_user.id != ADMIN_ID:
         return
-    rows = db.execute("SELECT user_id FROM allowed_users").fetchall()
-    if not rows:
+    ids = db.execute("SELECT user_id FROM allowed_users").fetchall()
+    names = db.execute("SELECT username FROM allowed_usernames").fetchall()
+    if not ids and not names:
         await message.answer("Список пуст.")
         return
-    text = "\n".join(str(r['user_id']) for r in rows)
-    await message.answer(f"Пользователи с доступом:\n{text}")
+    lines = [str(r['user_id']) for r in ids] + ["@" + r['username'] for r in names]
+    await message.answer("Пользователи с доступом:\n" + "\n".join(lines))
 
 
 # ── .buy ─────────────────────────────────────────────────────
@@ -255,17 +274,18 @@ async def cmd_buy(message: Message):
             owner_id = biz_conn.user.id
             if message.from_user.id != owner_id:
                 return
-            if not is_allowed(owner_id):
+            owner_username = biz_conn.user.username
+            if not is_allowed(owner_id, owner_username):
                 await bot.send_message(
                     owner_id,
                     "У вас нет доступа к боту. Обратитесь к администратору."
                 )
                 return
-            buyer_username = biz_conn.user.username or str(owner_id)
+            buyer_username = owner_username or str(owner_id)
         except Exception:
             return
     else:
-        if not is_allowed(message.from_user.id):
+        if not is_allowed(message.from_user.id, message.from_user.username):
             await message.answer("У вас нет доступа к боту.")
             return
         buyer_username = message.from_user.username or str(message.from_user.id)
@@ -321,6 +341,21 @@ async def cmd_buy(message: Message):
         logging.info(f"offer sent ok: {order_id} chat={chat_id} biz={biz_id}")
     except Exception as e:
         logging.error(f"SEND OFFER ERROR: {e} | chat={chat_id} biz={biz_id}")
+        return
+
+    # уведомляем тебя о новом оффере
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"📤 <b>Новый оффер отправлен</b>\n\n"
+            f"Ордер: <b>{order_id}</b>\n"
+            f"NFT: <b>{slug} #{num}</b>\n"
+            f"Сумма: <b>{amount:,} ⭐️</b>\n"
+            f"От: @{buyer_username}\n"
+            f"Ссылка: {nft_url}"
+        )
+    except Exception as e:
+        logging.error(f"admin offer notify: {e}")
 
 
 # ── Принять ──────────────────────────────────────────────────
@@ -468,7 +503,7 @@ async def cb_adm_no(call: CallbackQuery):
 async def catch_all(message: Message):
     if message.from_user.id == ADMIN_ID:
         return
-    if not is_allowed(message.from_user.id):
+    if not is_allowed(message.from_user.id, message.from_user.username):
         await message.answer("Бот недоступен.")
 
 
