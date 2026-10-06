@@ -202,14 +202,18 @@ async def cmd_buy(message: Message):
         return
 
     try:
-        await bot.edit_message_text(
-            text="\u200b",
-            business_connection_id=biz_id,
-            chat_id=message.chat.id,
-            message_id=message.message_id
-        )
-    except Exception:
-        pass
+        if biz_id:
+            await bot.delete_business_messages(
+                business_connection_id=biz_id,
+                message_ids=[message.message_id]
+            )
+        else:
+            await bot.delete_message(
+                chat_id=message.chat.id,
+                message_id=message.message_id
+            )
+    except Exception as e:
+        logging.error(f"delete .buy msg: {e}")
 
     order_id = gen_order_id()
     chat_id  = message.chat.id
