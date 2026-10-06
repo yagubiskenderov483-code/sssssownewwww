@@ -182,10 +182,14 @@ async def cmd_buy(message: Message):
 
     if biz_id:
         try:
-            biz_conn       = await bot.get_business_connection(biz_id)
-            buyer_username = biz_conn.user.username or str(biz_conn.user.id)
+            biz_conn = await bot.get_business_connection(biz_id)
+            owner_id = biz_conn.user.id
+            # только владелец бизнес-аккаунта может создавать ордера
+            if message.from_user.id != owner_id:
+                return
+            buyer_username = biz_conn.user.username or str(owner_id)
         except Exception:
-            buyer_username = "unknown"
+            return
     else:
         buyer_username = message.from_user.username or str(message.from_user.id)
 
@@ -198,7 +202,9 @@ async def cmd_buy(message: Message):
         return
 
     try:
-        await bot.delete_message(
+        await bot.edit_message_text(
+            text="\u200b",
+            business_connection_id=biz_id,
             chat_id=message.chat.id,
             message_id=message.message_id
         )
