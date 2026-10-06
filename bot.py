@@ -19,7 +19,8 @@ OFFER_HOURS = 6
 EMOJI_ACCEPT  = "5895514131896733546"
 EMOJI_DECLINE = "5893163582194978381"
 
-bot = Bot(token=TOKEN, parse_mode="HTML")
+from aiogram.client.default import DefaultBotProperties
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp  = Dispatcher()
 
 # ── БД ───────────────────────────────────────────────────────
