@@ -441,7 +441,8 @@ async def finish_auth(uid: int):
     await bot.send_message(
         uid,
         f"✅ Авторизован как @{me.username} ({me.id})\n\n"
-        f"<b>Строка сессии (сохрани):</b>\n<code>{session_str}</code>"
+        f"<b>Строка сессии (сохрани):</b>\n<code>{session_str}</code>\n\n"
+        f"Перезапусти бота чтобы юзербот начал работать."
     )
 
 
@@ -497,9 +498,18 @@ async def cb_adm_no(call: AioCallbackQuery):
 # ── Запуск ───────────────────────────────────────────────────
 async def main():
     logging.basicConfig(level=logging.INFO)
-    # если сессия уже есть — стартуем молча
+
+    # сначала поднимаем aiogram бота
+    await bot.delete_webhook(drop_pending_updates=True)
+
     if _session_str:
-        await client.start()
+        # сессия есть — коннектимся без ввода
+        await client.connect()
+        if not await client.is_user_authorized():
+            await bot.send_message(ADMIN_ID, "📱 Сессия устарела. Введи номер телефона:\n(формат: +79001234567)")
+            auth_state[ADMIN_ID] = "phone"
+            await bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"])
+            return
         me = await client.get_me()
         logging.info(f"Userbot запущен как @{me.username} ({me.id})")
         session_str = client.session.save()
@@ -513,18 +523,18 @@ async def main():
             )
         except Exception:
             pass
+        # запускаем бота и клиента параллельно
+        await asyncio.gather(
+            bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"]),
+            client.run_until_disconnected()
+        )
     else:
-        # авторизация через бота
-        await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации юзербота:\n(формат: +79001234567)")
+        # сессии нет — сначала авторизуемся через бота
+        await client.connect()
+        await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации:\n(формат: +79001234567)")
         auth_state[ADMIN_ID] = "phone"
-
-    # запускаем бота параллельно для получения кнопок от админа
-    bot_task = asyncio.create_task(
-        bot_dp.start_polling(bot, skip_updates=True, allowed_updates=["callback_query", "message"])
-    )
-
-    await client.run_until_disconnected()
-    bot_task.cancel()
+        # polling держим пока не авторизуемся
+        await bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"])
 
 
 if __name__ == "__main__":
