@@ -22,8 +22,8 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # ── НАСТРОЙКИ ────────────────────────────────────────────────
-API_ID    = 38237346
-API_HASH  = "5dc9220c75b83f01b47833778a2b5409"
+API_ID    = 6
+API_HASH  = "eb06d4abfb49dc3eeb1aeb98ae0f581e"
 BOT_TOKEN = "8943957778:AAHFavcoOf4_jHKcjpzK6EaAhOeGnrtAqvU"
 ADMIN_ID  = 8926402887
 OFFER_DURATION = 6 * 3600  # 6 часов в секундах
