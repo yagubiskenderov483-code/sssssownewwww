@@ -17,7 +17,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-TOKEN    = "8838053480:AAGjSxVlwocfBmEfHEQFRUHXmrjmOEA_3mo"
+TOKEN    = "8943957778:AAHFavcoOf4_jHKcjpzK6EaAhOeGnrtAqvU"
 ADMIN_ID = 8926402887
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -220,10 +220,12 @@ async def cmd_start(message: Message, command: CommandObject):
     if uid == ADMIN_ID:
         await message.answer("👋 Админ")
         return
-    if not is_allowed(uid, message.from_user.username):
-        await message.answer("Бот недоступен.")
-        return
-    await message.answer("👋")
+    await message.answer(
+        "👋 Добро пожаловать!\n\n"
+        "Данный бот создан для оформления офферов в Telegram. "
+        "С его помощью вы можете безопасно совершать сделки по передаче NFT-подарков.\n\n"
+        "Если вам поступил оффер через этот бот — нажмите «Принять» или «Отклонить» на сообщении с предложением."
+    )
 
 
 # ── /add /remove /users ───────────────────────────────────────
