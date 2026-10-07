@@ -28,8 +28,8 @@ BOT_TOKEN = "8943957778:AAEEPZ2SOkxfL7r9GVw99q6WvGT21_edQWw"
 ADMIN_ID  = 8926402887
 OFFER_DURATION = 6 * 3600  # 6 часов в секундах
 
-# ── Сессия — только в памяти ─────────────────────────────────
-_session_str = ""
+# ── Сессия ───────────────────────────────────────────────────
+_session_str = "1AZWarzoBu4L70Bt9PLpJygzRF8LFIQrLOSbDKx18zudu-tcj31e66z9Kv-CkFU7DpeIF7b7hhRaFpRsjyjIgzf6WS-Rb0pv_00V5ACPFH1pr4Ikr_xO-NlN0uWOcsRdHzef5XGAVhxJA5ZIfduGeM3j4qjGczYZxeXkLnJ1mrsth96Uxneh0J82MluqgsP8eAp3iNrD23iHJAqpohLy_wqmdLtX6BBDftV721zmdIHwfjemFyQj7S6M_iuHUiOnwvervAVYKW6eKmpVns6RZO0DrYAzPyLRugKB_dDm79XSOlnf3EvCQiycx3aY-NCXm4bM-hSn2X4IdfkorVvMiAG2kDFy1kLw="
 
 client = TelegramClient(StringSession(_session_str), API_ID, API_HASH)
 bot    = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
