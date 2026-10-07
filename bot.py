@@ -8,12 +8,8 @@ import sqlite3
 import string
 from datetime import datetime, timedelta
 
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from telethon.tl.types import (
-    ReplyInlineMarkup, KeyboardButtonCallback,
-    KeyboardButtonRow
-)
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -156,23 +152,17 @@ def deal_text(d: dict) -> str:
 
 
 def offer_buttons(order_id: str):
-    return ReplyInlineMarkup(rows=[
-        KeyboardButtonRow(buttons=[
-            KeyboardButtonCallback(text="Отклонить", data=f"decline:{order_id}".encode()),
-            KeyboardButtonCallback(text="Принять",   data=f"accept:{order_id}".encode()),
-        ])
-    ])
+    return [
+        [Button.inline("Отклонить", f"decline:{order_id}"),
+         Button.inline("Принять",   f"accept:{order_id}")]
+    ]
 
 
 def deal_buttons(d: dict):
-    return ReplyInlineMarkup(rows=[
-        KeyboardButtonRow(buttons=[
-            KeyboardButtonCallback(text="Передать NFT ↗", data=f"transfer:{d['order_id']}".encode()),
-        ]),
-        KeyboardButtonRow(buttons=[
-            KeyboardButtonCallback(text="Подтвердить передачу", data=f"confirm:{d['order_id']}".encode()),
-        ]),
-    ])
+    return [
+        [Button.inline("Передать NFT ↗",       f"transfer:{d['order_id']}")],
+        [Button.inline("Подтвердить передачу", f"confirm:{d['order_id']}")],
+    ]
 
 
 def admin_kb(order_id: str):
