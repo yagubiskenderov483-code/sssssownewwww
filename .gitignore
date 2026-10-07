@@ -5,3 +5,4 @@ __pycache__/
 deals.db
 *.db
 .DS_Store
+session_string.txt
