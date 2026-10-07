@@ -13,8 +13,7 @@ from aiogram.filters import CommandStart, CommandObject
 from aiogram.types import (
     CallbackQuery, InlineKeyboardButton, Message,
     LinkPreviewOptions, InlineQueryResultArticle,
-    InputTextMessageContent, InlineQuery,
-    SwitchInlineMarkup
+    InputTextMessageContent, InlineQuery
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
