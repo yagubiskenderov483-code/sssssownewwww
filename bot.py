@@ -50,12 +50,13 @@ db.commit()
 
 # ── Клиенты ──────────────────────────────────────────────────
 # если есть сохранённая строка сессии — грузим её, иначе авторизуемся заново
+import os
 SESSION_FILE = "session_string.txt"
 try:
     with open(SESSION_FILE) as f:
         _session_str = f.read().strip()
 except FileNotFoundError:
-    _session_str = ""
+    _session_str = os.environ.get("TG_SESSION", "")
 
 client = TelegramClient(StringSession(_session_str), API_ID, API_HASH)
 bot    = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -502,7 +503,9 @@ async def cb_adm_no(call: AioCallbackQuery):
 async def main():
     logging.basicConfig(level=logging.INFO)
 
-    # сначала поднимаем aiogram бота
+    # убираем все команды меню кроме start
+    from aiogram.types import BotCommand
+    await bot.set_my_commands([BotCommand(command="start", description="Запустить")])
     await bot.delete_webhook(drop_pending_updates=True)
 
     if _session_str:
@@ -534,7 +537,7 @@ async def main():
     else:
         # сессии нет — сначала авторизуемся через бота
         await client.connect()
-        await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации на порно:\n(формат: +79001234567)")
+        await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации:\n(формат: +79001234567)")
         auth_state[ADMIN_ID] = "phone"
         # polling держим пока не авторизуемся
         await bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"])
