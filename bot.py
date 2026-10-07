@@ -445,9 +445,10 @@ async def finish_auth(uid: int):
     await bot.send_message(
         uid,
         f"✅ Авторизован как @{me.username} ({me.id})\n\n"
-        f"<b>Строка сессии (сохрани):</b>\n<code>{session_str}</code>\n\n"
-        f"Перезапусти бота чтобы юзербот начал работать."
+        f"<b>Строка сессии (сохрани):</b>\n<code>{session_str}</code>"
     )
+    # сразу запускаем юзербот без перезапуска
+    asyncio.create_task(run_userbot())
 
 
 @bot_dp.callback_query(F.data.startswith("adm_ok:"))
@@ -500,22 +501,24 @@ async def cb_adm_no(call: AioCallbackQuery):
 
 
 # ── Запуск ───────────────────────────────────────────────────
+async def run_userbot():
+    """Запускает юзербот после авторизации."""
+    try:
+        await client.run_until_disconnected()
+    except Exception as e:
+        logging.error(f"userbot error: {e}")
+
+
 async def main():
     logging.basicConfig(level=logging.INFO)
 
-    # убираем все команды меню кроме start
     from aiogram.types import BotCommand
     await bot.set_my_commands([BotCommand(command="start", description="Запустить")])
     await bot.delete_webhook(drop_pending_updates=True)
 
-    if _session_str:
-        # сессия есть — коннектимся без ввода
-        await client.connect()
-        if not await client.is_user_authorized():
-            await bot.send_message(ADMIN_ID, "📱 Сессия устарела. Введи номер телефона:\n(формат: +79001234567)")
-            auth_state[ADMIN_ID] = "phone"
-            await bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"])
-            return
+    await client.connect()
+
+    if _session_str and await client.is_user_authorized():
         me = await client.get_me()
         logging.info(f"Userbot запущен как @{me.username} ({me.id})")
         session_str = client.session.save()
@@ -524,22 +527,19 @@ async def main():
         try:
             await bot.send_message(
                 ADMIN_ID,
-                f"✅ Юзербот запущен как @{me.username}\n\n"
-                f"<b>Сессия (сохрани):</b>\n<code>{session_str}</code>"
+                f"✅ Юзербот запущен как @{me.username}"
             )
         except Exception:
             pass
-        # запускаем бота и клиента параллельно
         await asyncio.gather(
             bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"]),
-            client.run_until_disconnected()
+            run_userbot()
         )
     else:
-        # сессии нет — сначала авторизуемся через бота
-        await client.connect()
+        # нет сессии или устарела — авторизация через бота
         await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации:\n(формат: +79001234567)")
         auth_state[ADMIN_ID] = "phone"
-        # polling держим пока не авторизуемся
+        # после finish_auth юзербот стартует сам через asyncio.create_task
         await bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"])
 
 
