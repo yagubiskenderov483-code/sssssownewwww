@@ -28,13 +28,8 @@ BOT_TOKEN = "8943957778:AAEEPZ2SOkxfL7r9GVw99q6WvGT21_edQWw"
 ADMIN_ID  = 8926402887
 OFFER_DURATION = 6 * 3600  # 6 часов в секундах
 
-# ── Сессия ───────────────────────────────────────────────────
-SESSION_FILE = "session_string.txt"
-try:
-    with open(SESSION_FILE) as f:
-        _session_str = f.read().strip()
-except FileNotFoundError:
-    _session_str = os.environ.get("TG_SESSION", "")
+# ── Сессия — только в памяти ─────────────────────────────────
+_session_str = ""
 
 client = TelegramClient(StringSession(_session_str), API_ID, API_HASH)
 bot    = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -341,13 +336,9 @@ async def finish_auth(uid: int):
     auth_state.pop(uid, None)
     auth_data.pop(uid, None)
     me = await client.get_me()
-    session_str = client.session.save()
-    with open(SESSION_FILE, "w") as f:
-        f.write(session_str)
     await bot.send_message(
         uid,
-        f"✅ Авторизован как @{me.username} ({me.id})\n\n"
-        f"<b>Строка сессии (сохрани):</b>\n<code>{session_str}</code>"
+        f"✅ Авторизован как @{me.username} ({me.id})\n\nБот запущен и готов к работе."
     )
     asyncio.create_task(run_userbot())
 
@@ -476,9 +467,6 @@ async def main():
     if _session_str and await client.is_user_authorized():
         me = await client.get_me()
         logging.info(f"Юзербот: @{me.username}")
-        session_str = client.session.save()
-        with open(SESSION_FILE, "w") as f:
-            f.write(session_str)
         try:
             await bot.send_message(ADMIN_ID, f"✅ Запущен как @{me.username}")
         except Exception:
