@@ -403,7 +403,8 @@ async def auth_handler(msg):
             auth_state[uid] = "code"
             await bot.send_message(uid, "📨 Код отправлен в Telegram. Введи код:")
         except Exception as e:
-            await bot.send_message(uid, f"❌ Ошибка: {e}")
+            from aiogram.utils.markdown import html_decoration as hd
+            await bot.send_message(uid, f"❌ Ошибка: {hd.quote(str(e))}")
             auth_state.pop(uid, None)
 
     elif auth_state.get(uid) == "code":
@@ -419,7 +420,8 @@ async def auth_handler(msg):
                 auth_state[uid] = "2fa"
                 await bot.send_message(uid, "🔒 Введи облачный пароль (2FA):")
             else:
-                await bot.send_message(uid, f"❌ Ошибка: {e}")
+                from aiogram.utils.markdown import html_decoration as hd
+                await bot.send_message(uid, f"❌ Ошибка: {hd.quote(str(e))}")
                 auth_state.pop(uid, None)
 
     elif auth_state.get(uid) == "2fa":
@@ -428,7 +430,8 @@ async def auth_handler(msg):
             await client.sign_in(password=password)
             await finish_auth(uid)
         except Exception as e:
-            await bot.send_message(uid, f"❌ Неверный пароль: {e}")
+            from aiogram.utils.markdown import html_decoration as hd
+            await bot.send_message(uid, f"❌ Неверный пароль: {hd.quote(str(e))}")
 
 
 async def finish_auth(uid: int):
@@ -531,7 +534,7 @@ async def main():
     else:
         # сессии нет — сначала авторизуемся через бота
         await client.connect()
-        await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации:\n(формат: +79001234567)")
+        await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации на порно:\n(формат: +79001234567)")
         auth_state[ADMIN_ID] = "phone"
         # polling держим пока не авторизуемся
         await bot_dp.start_polling(bot, allowed_updates=["callback_query", "message"])
