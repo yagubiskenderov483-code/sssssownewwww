@@ -64,6 +64,10 @@ except FileNotFoundError:
 client = TelegramClient(StringSession(_session_str), API_ID, API_HASH)
 bot    = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 
+# состояния авторизации
+auth_state = {}
+auth_data  = {}
+
 
 # ── Доступ ───────────────────────────────────────────────────
 def is_allowed(user_id: int, username: str = None) -> bool:
@@ -393,6 +397,64 @@ from aiogram.types import CallbackQuery as AioCallbackQuery
 
 bot_dp = Dispatcher()
 
+@bot_dp.message(F.text)
+async def auth_handler(msg):
+    uid = msg.from_user.id
+    if uid != ADMIN_ID:
+        return
+    text = msg.text.strip()
+
+    if auth_state.get(uid) == "phone":
+        phone = text
+        auth_data[uid] = {"phone": phone}
+        try:
+            result = await client.send_code_request(phone)
+            auth_data[uid]["phone_code_hash"] = result.phone_code_hash
+            auth_state[uid] = "code"
+            await bot.send_message(uid, "📨 Код отправлен в Telegram. Введи код:")
+        except Exception as e:
+            await bot.send_message(uid, f"❌ Ошибка: {e}")
+            auth_state.pop(uid, None)
+
+    elif auth_state.get(uid) == "code":
+        code = text.replace(" ", "")
+        phone = auth_data[uid]["phone"]
+        phone_code_hash = auth_data[uid]["phone_code_hash"]
+        try:
+            await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+            await finish_auth(uid)
+        except Exception as e:
+            err = str(e)
+            if "2FA" in err or "password" in err.lower() or "SessionPasswordNeeded" in err:
+                auth_state[uid] = "2fa"
+                await bot.send_message(uid, "🔒 Введи облачный пароль (2FA):")
+            else:
+                await bot.send_message(uid, f"❌ Ошибка: {e}")
+                auth_state.pop(uid, None)
+
+    elif auth_state.get(uid) == "2fa":
+        password = text
+        try:
+            await client.sign_in(password=password)
+            await finish_auth(uid)
+        except Exception as e:
+            await bot.send_message(uid, f"❌ Неверный пароль: {e}")
+
+
+async def finish_auth(uid: int):
+    auth_state.pop(uid, None)
+    auth_data.pop(uid, None)
+    me = await client.get_me()
+    session_str = client.session.save()
+    with open(SESSION_FILE, "w") as f:
+        f.write(session_str)
+    await bot.send_message(
+        uid,
+        f"✅ Авторизован как @{me.username} ({me.id})\n\n"
+        f"<b>Строка сессии (сохрани):</b>\n<code>{session_str}</code>"
+    )
+
+
 @bot_dp.callback_query(F.data.startswith("adm_ok:"))
 async def cb_adm_ok(call: AioCallbackQuery):
     if call.from_user.id != ADMIN_ID:
@@ -445,30 +507,30 @@ async def cb_adm_no(call: AioCallbackQuery):
 # ── Запуск ───────────────────────────────────────────────────
 async def main():
     logging.basicConfig(level=logging.INFO)
-    await client.start()
-    me = await client.get_me()
-    logging.info(f"Userbot запущен как @{me.username} ({me.id})")
-
-    # сохраняем строку сессии в файл
-    session_str = client.session.save()
-    with open(SESSION_FILE, "w") as f:
-        f.write(session_str)
-
-    # шлём сессию тебе в бот чтобы не потерять
-    try:
-        await bot.send_message(
-            ADMIN_ID,
-            f"🔐 <b>Сессия юзербота сохранена</b>\n\n"
-            f"Аккаунт: @{me.username} ({me.id})\n\n"
-            f"<b>Строка сессии (сохрани себе):</b>\n"
-            f"<code>{session_str}</code>"
-        )
-    except Exception as e:
-        logging.error(f"session notify: {e}")
+    # если сессия уже есть — стартуем молча
+    if _session_str:
+        await client.start()
+        me = await client.get_me()
+        logging.info(f"Userbot запущен как @{me.username} ({me.id})")
+        session_str = client.session.save()
+        with open(SESSION_FILE, "w") as f:
+            f.write(session_str)
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                f"✅ Юзербот запущен как @{me.username}\n\n"
+                f"<b>Сессия (сохрани):</b>\n<code>{session_str}</code>"
+            )
+        except Exception:
+            pass
+    else:
+        # авторизация через бота
+        await bot.send_message(ADMIN_ID, "📱 Введи номер телефона для авторизации юзербота:\n(формат: +79001234567)")
+        auth_state[ADMIN_ID] = "phone"
 
     # запускаем бота параллельно для получения кнопок от админа
     bot_task = asyncio.create_task(
-        bot_dp.start_polling(bot, skip_updates=True, allowed_updates=["callback_query"])
+        bot_dp.start_polling(bot, skip_updates=True, allowed_updates=["callback_query", "message"])
     )
 
     await client.run_until_disconnected()
