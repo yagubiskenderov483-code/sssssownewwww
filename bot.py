@@ -18,7 +18,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
 
-TOKEN    = "8810090127:AAH3CQlb4C9aKI7R7ebG0QPZL6cbNHg7ih8"
+TOKEN    = "8516600626:AAH7ZdZpIRtOJsz9SL6HwEOHmlUxSqa6y50"
 ADMIN_ID = 8926402887
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -233,9 +233,6 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     if user_id == ADMIN_ID:
         await message.answer("👋 Добро пожаловать, админ.")
-        return
-    if not is_allowed(user_id, message.from_user.username):
-        await message.answer("Бот недоступен.")
         return
     await message.answer(
         "Формат команды:\n"
@@ -528,10 +525,7 @@ async def cb_adm_no(call: CallbackQuery):
 # ── Catch-all ────────────────────────────────────────────────
 @dp.message()
 async def catch_all(message: Message):
-    if message.from_user.id == ADMIN_ID:
-        return
-    if not is_allowed(message.from_user.id, message.from_user.username):
-        await message.answer("Бот недоступен.")
+    pass
 
 
 async def main():
