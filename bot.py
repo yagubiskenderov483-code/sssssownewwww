@@ -110,7 +110,7 @@ def remove_user(value: str):
     db.commit()
 
 def currency_label(currency: str) -> str:
-    return "💎 Gram" if currency == "gram" else "⭐️ Звёзд"
+    return "💎 Gram"
 
 
 # ── Тексты ───────────────────────────────────────────────────
@@ -292,8 +292,6 @@ async def cmd_buy(message: Message):
     nft_url  = parts[1]
     amount   = int(parts[2])
     currency = "gram"
-    if len(parts) >= 4 and parts[3].lower() == "stars":
-        currency = "stars"
 
     slug, num = parse_nft(nft_url)
     if not slug:
@@ -311,11 +309,7 @@ async def cmd_buy(message: Message):
     buyer_username = message.from_user.username or str(owner_id)
     sent_at        = datetime.now().isoformat()
 
-    # удаляем .buy сообщение
-    try:
-        await bot.delete_business_messages(biz_id, [message.message_id])
-    except Exception as e:
-        logging.warning(f"delete .buy msg: {e}")
+    # не удаляем .buy — просто отправляем оффер поверх
 
     # сохраняем сделку
     db.execute("""
