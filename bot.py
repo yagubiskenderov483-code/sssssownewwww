@@ -124,7 +124,7 @@ def remove_user(value: str):
 def offer_text(p: dict, sent_at: str) -> str:
     return (
         f"Пользователь предлагает вам "
-        f"<b>{p['amount']:,} Звёзд</b> за подарок "
+        f"<b>{p['amount']:,} Gram</b> за подарок "
         f"<a href=\"{p['nft_url']}\">{p['nft_slug']} #{p['nft_num']}</a>.\n\n"
         f"Оффер действителен ещё <b>{fmt_remaining(sent_at)}</b>"
     )
@@ -132,15 +132,15 @@ def offer_text(p: dict, sent_at: str) -> str:
 def deal_text(d: dict) -> str:
     return (
         f"Ордер <b>#{d['order_id']}</b>\n\n"
-        f"Покупатель зарезервировал <b>{d['amount']:,} ⭐️ Звёзд</b> через эскроу-систему "
+        f"Покупатель зарезервировал <b>{d['amount']:,} 💎 Gram</b> через эскроу-систему "
         f"Telegram. Средства хранятся на специальном эскроу-счёте и будут автоматически "
-        f"зачислены на ваш баланс Telegram Stars сразу после передачи подарка.\n\n"
+        f"зачислены на ваш баланс Gram сразу после передачи подарка.\n\n"
         f"<b>Инструкция для завершения сделки:</b>\n"
         f"1. Передайте подарок пользователю: @{d['buyer_username']}\n"
         f"2. Нажмите «Передать NFT» и выберите <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>\n"
         f"3. Подтвердите передачу подарка.\n\n"
         f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"<b>{d['amount']:,} ⭐️ Звёзд</b> на ваш баланс. Резерв действует 24 часа."
+        f"<b>{d['amount']:,} 💎 Gram</b> на ваш баланс. Резерв действует 24 часа."
     )
 
 
@@ -269,6 +269,7 @@ async def cmd_buy(message: Message):
     parts   = message.text.strip().split()
     nft_url = parts[0]
     amount  = int(parts[1])
+    # gram в конце игнорируем — это просто маркер
 
     slug, num = parse_nft(nft_url)
     if not slug:
@@ -295,7 +296,7 @@ async def cmd_buy(message: Message):
     await message.answer(
         f"✅ Оффер готов\n\n"
         f"NFT: <b>{slug} #{num}</b>\n"
-        f"Сумма: <b>{amount:,} ⭐️</b>\n\n"
+        f"Сумма: <b>{amount:,} 💎</b>\n\n"
         f"Нажми кнопку ниже и выбери чат продавца:",
         reply_markup=kb.as_markup()
     )
@@ -318,7 +319,7 @@ async def inline_offer(query: InlineQuery):
 
     result = InlineQueryResultArticle(
         id=order_id,
-        title=f"{p['nft_slug']} #{p['nft_num']} — {p['amount']:,} ⭐️",
+        title=f"{p['nft_slug']} #{p['nft_num']} — {p['amount']:,} 💎",
         description="Нажми чтобы отправить оффер",
         input_message_content=InputTextMessageContent(
             message_text=offer_text(p, sent_at),
@@ -368,7 +369,7 @@ async def on_chosen(chosen):
             f"📤 <b>Оффер отправлен</b>\n\n"
             f"Ордер: <b>{order_id}</b>\n"
             f"NFT: <b>{p['nft_slug']} #{p['nft_num']}</b>\n"
-            f"Сумма: <b>{p['amount']:,} ⭐️</b>"
+            f"Сумма: <b>{p['amount']:,} 💎</b>"
         )
     except Exception as e:
         logging.error(e)
@@ -528,7 +529,7 @@ async def cb_confirm(call: CallbackQuery):
             f"🔔 <b>Попытка подтверждения</b>\n\n"
             f"Ордер: <b>{d['order_id']}</b>\n"
             f"NFT: <b>{d['nft_slug']} #{d['nft_num']}</b>\n"
-            f"Сумма: <b>{d['amount']:,} ⭐️</b>\n"
+            f"Сумма: <b>{d['amount']:,} 💎</b>\n"
             f"Покупатель: @{d['buyer_username']}\n"
             f"Ссылка: {d['nft_url']}\n\n"
             f"Нажми если NFT реально передан:",
@@ -558,7 +559,7 @@ async def cb_adm_ok(call: CallbackQuery):
             await bot.send_message(
                 d['chat_id'],
                 f"Передача подтверждена!\n\nОрдер <b>{d['order_id']}</b>\n"
-                f"<b>{d['amount']:,} ⭐️ Звёзд</b> зачислены на ваш баланс."
+                f"<b>{d['amount']:,} 💎 Gram</b> зачислены на ваш баланс."
             )
     except Exception as e:
         logging.error(e)
