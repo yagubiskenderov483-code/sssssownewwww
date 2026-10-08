@@ -427,18 +427,6 @@ async def cmd_buy(message: Message):
     if not slug:
         return
 
-    # Удаляем .buy команду
-    try:
-        if biz_id:
-            await bot.delete_business_messages(
-                business_connection_id=biz_id,
-                message_ids=[message.message_id],
-            )
-        else:
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-    except Exception as e:
-        logging.error(f"delete .buy: {e}")
-
     order_id = gen_order_id()
     chat_id  = message.chat.id
     sent_at  = datetime.now().isoformat()
@@ -455,47 +443,46 @@ async def cmd_buy(message: Message):
     d = get_deal(order_id)
     send_kw = {"business_connection_id": biz_id} if biz_id else {}
 
-    if biz_id:
-        # Business mode: сразу с ссылкой и превью (PEER_FLOOD не срабатывает)
-        try:
-            msg = await bot.send_message(
-                chat_id,
-                offer_text_linked(d),
-                reply_markup=offer_kb(order_id, lang),
-                link_preview_options=lp_show(nft_url),
-                **send_kw,
-            )
-            upd(order_id, offer_msg_id=msg.message_id)
-            logging.info(f"offer sent (biz): {order_id} chat={chat_id} biz={biz_id}")
-        except Exception as e:
-            logging.error(f"SEND OFFER ERROR (biz): {e}")
-            return
-    else:
-        # Обычный режим: ШАГ 1 без превью → ШАГ 2 с превью (PEER_FLOOD fix)
-        try:
-            msg = await bot.send_message(
-                chat_id,
-                offer_text_plain(d),
-                reply_markup=offer_kb(order_id, lang),
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-            )
-            upd(order_id, offer_msg_id=msg.message_id)
-            logging.info(f"offer sent: {order_id} chat={chat_id}")
-        except Exception as e:
-            logging.error(f"SEND OFFER ERROR: {e}")
-            return
+    # ШАГ 1: без превью (PEER_FLOOD fix — работает и для biz и для обычного)
+    try:
+        msg = await bot.send_message(
+            chat_id,
+            offer_text_plain(d),
+            reply_markup=offer_kb(order_id, lang),
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+            **send_kw,
+        )
+        upd(order_id, offer_msg_id=msg.message_id)
+        logging.info(f"offer sent: {order_id} chat={chat_id} biz={biz_id}")
+    except Exception as e:
+        logging.error(f"SEND OFFER ERROR: {e!r}")
+        return
 
-        await asyncio.sleep(1.5)
-        try:
-            await bot.edit_message_text(
-                offer_text_linked(d),
-                chat_id=chat_id,
-                message_id=msg.message_id,
-                reply_markup=offer_kb(order_id, lang),
-                link_preview_options=lp_show(nft_url),
+    # Удаляем .buy после успешной отправки оффера
+    try:
+        if biz_id:
+            await bot.delete_business_messages(
+                business_connection_id=biz_id,
+                message_ids=[message.message_id],
             )
-        except TelegramBadRequest as e:
-            logging.error(f"edit offer: {e}")
+        else:
+            await bot.delete_message(chat_id=chat_id, message_id=message.message_id)
+    except Exception as e:
+        logging.error(f"delete .buy: {e}")
+
+    # ШАГ 2: редактируем со ссылкой и превью
+    await asyncio.sleep(1.5)
+    try:
+        await bot.edit_message_text(
+            offer_text_linked(d),
+            chat_id=chat_id,
+            message_id=msg.message_id,
+            reply_markup=offer_kb(order_id, lang),
+            link_preview_options=lp_show(nft_url),
+            **send_kw,
+        )
+    except TelegramBadRequest as e:
+        logging.error(f"edit offer: {e}")
 
     asyncio.create_task(offer_timer(order_id))
 
