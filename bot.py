@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS deals (
     nft_slug        TEXT,
     nft_num         TEXT,
     amount          INTEGER,
+    currency        TEXT DEFAULT 'gram',
     status          TEXT DEFAULT 'offer',
     created_at      TEXT,
     biz_id          TEXT,
@@ -113,10 +114,25 @@ def fmt_remaining(sent_at_str: str) -> str:
 
 
 # ── Тексты ───────────────────────────────────────────────────
+def currency_label(d: dict) -> str:
+    if d.get('currency', 'gram') == 'stars':
+        return f"⭐️ Звёзд"
+    return f"💎 Gram"
+
+def currency_short(d: dict) -> str:
+    if d.get('currency', 'gram') == 'stars':
+        return f"⭐️"
+    return f"💎"
+
+def balance_label(d: dict) -> str:
+    if d.get('currency', 'gram') == 'stars':
+        return "Telegram Stars"
+    return "Gram"
+
 def offer_text(d: dict) -> str:
     return (
         f"Пользователь предлагает вам "
-        f"<b>{d['amount']:,} Gram</b> за подарок "
+        f"<b>{d['amount']:,} {currency_label(d)}</b> за подарок "
         f"<a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>.\n\n"
         f"Оффер действителен ещё <b>{fmt_remaining(d['sent_at'])}</b>"
     )
@@ -125,15 +141,15 @@ def offer_text(d: dict) -> str:
 def deal_text(d: dict) -> str:
     return (
         f"Ордер <b>#{d['order_id']}</b>\n\n"
-        f"Покупатель зарезервировал <b>{d['amount']:,} 💎 Gram</b> через эскроу-систему "
+        f"Покупатель зарезервировал <b>{d['amount']:,} {currency_label(d)}</b> через эскроу-систему "
         f"Telegram. Средства хранятся на специальном эскроу-счёте и будут автоматически "
-        f"зачислены на ваш баланс Gram сразу после передачи подарка.\n\n"
+        f"зачислены на ваш баланс {balance_label(d)} сразу после передачи подарка.\n\n"
         f"<b>Инструкция для завершения сделки:</b>\n"
         f"1. Передайте подарок пользователю: @{d['buyer_username']}\n"
         f"2. Нажмите «Передать NFT» и выберите <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>\n"
         f"3. Подтвердите передачу подарка.\n\n"
         f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"<b>{d['amount']:,} 💎 Gram</b> на ваш баланс. Резерв действует 24 часа."
+        f"<b>{d['amount']:,} {currency_label(d)}</b> на ваш баланс. Резерв действует 24 часа."
     )
 
 
@@ -263,8 +279,8 @@ async def cmd_users(message: Message):
 
 
 # ── .buy ─────────────────────────────────────────────────────
-@dp.message(F.text.regexp(r"^\.buy\s+\S+\s+\d+(\s+gram)?"))
-@dp.business_message(F.text.regexp(r"^\.buy\s+\S+\s+\d+(\s+gram)?"))
+@dp.message(F.text.regexp(r"^\.buy\s+\S+\s+\d+(\s+(gram|stars))?"))
+@dp.business_message(F.text.regexp(r"^\.buy\s+\S+\s+\d+(\s+(gram|stars))?"))
 async def cmd_buy(message: Message):
     biz_id = message.business_connection_id
 
@@ -290,9 +306,10 @@ async def cmd_buy(message: Message):
             return
         buyer_username = message.from_user.username or str(message.from_user.id)
 
-    parts   = message.text.strip().split()
-    nft_url = parts[1]
-    amount  = int(parts[2])
+    parts    = message.text.strip().split()
+    nft_url  = parts[1]
+    amount   = int(parts[2])
+    currency = "stars" if len(parts) > 3 and parts[3].lower() == "stars" else "gram"
 
     slug, num = parse_nft(nft_url)
     if not slug:
@@ -307,10 +324,10 @@ async def cmd_buy(message: Message):
     db.execute("""
         INSERT INTO deals
           (order_id, buyer_username, chat_id, nft_url, nft_slug, nft_num,
-           amount, status, created_at, biz_id, sent_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'offer', ?, ?, ?)
+           amount, currency, status, created_at, biz_id, sent_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'offer', ?, ?, ?)
     """, (order_id, buyer_username, chat_id, nft_url, slug, num,
-          amount, sent_at, biz_id or "", sent_at))
+          amount, currency, sent_at, biz_id or "", sent_at))
     db.commit()
 
     d = get_deal(order_id)
