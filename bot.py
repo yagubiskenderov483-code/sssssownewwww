@@ -672,7 +672,7 @@ async def on_decline(cb: CallbackQuery):
 @dp.callback_query(F.data.startswith("accept:"))
 async def on_accept(cb: CallbackQuery):
     order_id = cb.data.split(":", 1)[1]
-    logging.info(f"CB accept: order={order_id} from={cb.from_user.id} state={PENDING.get(order_id, {}).get('state')}")
+    logging.info(f"CB accept: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
         await cb.answer()
@@ -680,18 +680,10 @@ async def on_accept(cb: CallbackQuery):
     meta["last_click_at"] = time.time()
     lang = meta["lang"]
 
-    # уже в инструкции — ничего не делаем
     if meta["state"] == "INSTRUCTION":
         await cb.answer()
         return
 
-    # первый клик — ровно как on_confirm при ошибке: показываем alert и return
-    if meta["state"] == "OFFER":
-        meta["state"] = "ALERT_SHOWN"
-        await cb.answer(t(lang, "alert"), show_alert=True)
-        return
-
-    # второй клик (после закрытия alert) — разворачиваем инструкцию
     try:
         await bot.edit_message_text(
             chat_id=meta["chat_id"],
