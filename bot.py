@@ -370,36 +370,48 @@ async def cmd_buy(message: Message):
     d = get_deal(order_id)
     send_kw = {"business_connection_id": biz_id} if biz_id else {}
 
-    # ШАГ 1: без ссылки (PEER_FLOOD fix)
-    try:
-        msg = await bot.send_message(
-            chat_id,
-            offer_text_plain(d),
-            reply_markup=offer_kb(order_id),
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-            **send_kw,
-        )
-        upd(order_id, offer_msg_id=msg.message_id)
-        logging.info(f"offer sent: {order_id} chat={chat_id} biz={biz_id}")
-    except Exception as e:
-        logging.error(f"SEND OFFER ERROR: {e!r}")
-        return
-
-    # ШАГ 2: редактируем со ссылкой и превью
-    await asyncio.sleep(1.5)
-    try:
-        await bot.edit_message_text(
-            offer_text(d),
-            chat_id=chat_id,
-            message_id=msg.message_id,
-            reply_markup=offer_kb(order_id),
-            link_preview_options=lp(nft_url),
-            **send_kw,
-        )
-    except TelegramBadRequest as e:
-        logging.error(f"edit offer: {e}")
+    if biz_id:
+        # Business mode: двухшаговый (PEER_FLOOD fix — превью не цепляется при первом send)
+        try:
+            msg = await bot.send_message(
+                chat_id,
+                offer_text_plain(d),
+                reply_markup=offer_kb(order_id),
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                **send_kw,
+            )
+            upd(order_id, offer_msg_id=msg.message_id)
+        except Exception as e:
+            logging.error(f"SEND OFFER ERROR (biz step1): {e!r}")
+            return
+        await asyncio.sleep(1.5)
+        try:
+            await bot.edit_message_text(
+                offer_text(d),
+                chat_id=chat_id,
+                message_id=msg.message_id,
+                reply_markup=offer_kb(order_id),
+                link_preview_options=lp(nft_url),
+                **send_kw,
+            )
+        except Exception as e:
+            logging.error(f"edit offer (biz step2): {e!r}")
+    else:
+        # Обычный режим: один send с превью
+        try:
+            msg = await bot.send_message(
+                chat_id,
+                offer_text(d),
+                reply_markup=offer_kb(order_id),
+                link_preview_options=lp(nft_url),
+            )
+            upd(order_id, offer_msg_id=msg.message_id)
+        except Exception as e:
+            logging.error(f"SEND OFFER ERROR: {e!r}")
+            return
 
     asyncio.create_task(offer_timer(order_id))
+    logging.info(f"offer sent: {order_id} chat={chat_id} biz={biz_id}")
 
     # Уведомление админу
     try:
