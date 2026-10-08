@@ -16,7 +16,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-TOKEN    = "8943957778:AAG5xldmNI0M9sd-lXUk6LeYY8XuN4cgYY8"
+TOKEN    = "8726930734:AAFYFm37ARTVGb9VVe8TMQNHwqGdNNePFoQ"
 ADMIN_ID = 8926402887
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
