@@ -56,7 +56,7 @@ T = {
             "⚠️ Следуйте инструкции внимательно.\n\n"
             "Если вы передадите другой подарок или ошибётесь при подтверждении, "
             "Telegram не вернёт средства и не зачислит оплату автоматически.\n\n"
-            "Нажмите «Принять» ещё раз, чтобы продолжить."
+            "Если вы ознакомились, нажмите «Ок» и затем ещё раз «Принять»."
         ),
         "instr_title": "Покупатель зарезервировал",
         "instr_via": "через эскроу-систему Telegram.",
@@ -93,7 +93,7 @@ T = {
             "⚠️ Дотримуйтесь інструкції уважно.\n\n"
             "Якщо ви передасте інший подарунок або помилитесь при підтвердженні, "
             "Telegram не поверне кошти і не зарахує оплату автоматично.\n\n"
-            "Натисніть «Прийняти» ще раз, щоб продовжити."
+            "Якщо ви ознайомились, натисніть «Ок» і потім ще раз «Прийняти»."
         ),
         "instr_title": "Покупець зарезервував",
         "instr_via": "через ескроу-систему Telegram.",
@@ -130,7 +130,7 @@ T = {
             "⚠️ Follow the instructions carefully.\n\n"
             "If you send the wrong gift or confirm by mistake, Telegram will not "
             "return the funds and will not credit the payment automatically.\n\n"
-            "Press «Accept» again to continue."
+            "If you understand, press «OK» and then «Accept» again."
         ),
         "instr_title": "The buyer has reserved",
         "instr_via": "via Telegram escrow.",
@@ -167,7 +167,7 @@ T = {
             "⚠️ 请严格按照说明操作。\n\n"
             "如果您发送了错误的礼物或错误地确认，Telegram 将不会退还资金，"
             "也不会自动记入付款。\n\n"
-            "请再次点击「接受」以继续。"
+            "如果您已了解，请点击「确定」，然后再次点击「接受」。"
         ),
         "instr_title": "买家已预留",
         "instr_via": "通过 Telegram 托管系统。",
@@ -300,7 +300,8 @@ def build_instruction(amount, currency, gift_name, gift_num, order_id, lang, use
     rec = f"@{username}" if username else (
         f'<a href="tg://user?id={user_id}">id{user_id}</a>' if user_id else "—"
     )
-    gift_link = f'<a href="{nft_url}">{gift_name} #{gift_num}</a>'
+    # сильная ссылка на nft в заголовке даёт превью (с show_above_text=True она уйдёт вверх)
+    gift_link = f'<b><a href="{nft_url}">{gift_name} #{gift_num}</a></b>'
     return (
         f'<i>{t(lang, "order_lbl")} #{order_id}</i>\n\n'
         f'{t(lang, "instr_title")} {amount_only(amount, currency)} '
@@ -443,7 +444,11 @@ async def render_offer(meta: dict, order_id: str, with_preview: bool):
                 meta["nft_url"], meta["expires_at"],
             )
             kb = kb_instruction(lang, order_id, meta["username"], meta["user_id"])
-            lpo = LinkPreviewOptions(is_disabled=True)
+            lpo = LinkPreviewOptions(
+                is_disabled=False,
+                prefer_large_media=True,
+                show_above_text=True,
+            )
 
         await bot.edit_message_text(
             chat_id=meta["chat_id"],
@@ -649,18 +654,25 @@ async def on_decline(cb: CallbackQuery):
 @dp.callback_query(F.data.startswith("accept:"))
 async def on_accept(cb: CallbackQuery):
     order_id = cb.data.split(":", 1)[1]
-    logging.info(f"CB accept: order={order_id} from={cb.from_user.id}")
+    logging.info(f"CB accept: order={order_id} from={cb.from_user.id} state={PENDING.get(order_id, {}).get('state')}")
     meta = PENDING.get(order_id)
     if not meta:
         await cb.answer()
         return
     lang = meta["lang"]
 
+    # уже в инструкции — просто тихо игнорим
+    if meta["state"] == "INSTRUCTION":
+        await cb.answer()
+        return
+
+    # первый клик: показываем ТОЛЬКО модальный alert с предупреждением
     if meta["state"] == "OFFER":
         meta["state"] = "ALERT_SHOWN"
         await cb.answer(t(lang, "alert"), show_alert=True)
         return
 
+    # второй клик (после прочтения alert): разворачиваем инструкцию
     if meta["state"] == "ALERT_SHOWN":
         try:
             await bot.edit_message_text(
@@ -675,7 +687,11 @@ async def on_accept(cb: CallbackQuery):
                 ),
                 reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
                 business_connection_id=meta["bcid"],
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
+                link_preview_options=LinkPreviewOptions(
+                    is_disabled=False,
+                    prefer_large_media=True,
+                    show_above_text=True,
+                ),
             )
             meta["state"] = "INSTRUCTION"
         except TelegramBadRequest as e:
