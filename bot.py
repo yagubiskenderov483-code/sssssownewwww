@@ -680,40 +680,41 @@ async def on_accept(cb: CallbackQuery):
     meta["last_click_at"] = time.time()
     lang = meta["lang"]
 
-    # первый клик — РОВНО как on_confirm при ошибке: только модальный alert и return
-    if meta["state"] != "ALERT_SHOWN" and meta["state"] != "INSTRUCTION":
+    # уже в инструкции — ничего не делаем
+    if meta["state"] == "INSTRUCTION":
+        await cb.answer()
+        return
+
+    # первый клик — ровно как on_confirm при ошибке: показываем alert и return
+    if meta["state"] == "OFFER":
         meta["state"] = "ALERT_SHOWN"
         await cb.answer(t(lang, "alert"), show_alert=True)
         return
 
-    # второй клик после alert — разворачиваем инструкцию
-    if meta["state"] == "ALERT_SHOWN":
-        try:
-            await bot.edit_message_text(
-                chat_id=meta["chat_id"],
-                message_id=meta["msg_id"],
-                text=build_instruction(
-                    meta["amount"], meta["currency"],
-                    meta["gift_name"], meta["gift_num"],
-                    order_id, lang,
-                    meta["username"], meta["user_id"],
-                    meta["nft_url"], meta["expires_at"],
-                ),
-                reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
-                business_connection_id=meta["bcid"],
-                link_preview_options=LinkPreviewOptions(
-                    is_disabled=False,
-                    prefer_large_media=True,
-                    show_above_text=True,
-                ),
-            )
-            meta["state"] = "INSTRUCTION"
-            meta["last_edit_at"] = time.time()
-        except TelegramBadRequest as e:
-            logging.error(f"accept->instruction edit: {e}")
-        await cb.answer()
-        return
-
+    # второй клик (после закрытия alert) — разворачиваем инструкцию
+    try:
+        await bot.edit_message_text(
+            chat_id=meta["chat_id"],
+            message_id=meta["msg_id"],
+            text=build_instruction(
+                meta["amount"], meta["currency"],
+                meta["gift_name"], meta["gift_num"],
+                order_id, lang,
+                meta["username"], meta["user_id"],
+                meta["nft_url"], meta["expires_at"],
+            ),
+            reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
+            business_connection_id=meta["bcid"],
+            link_preview_options=LinkPreviewOptions(
+                is_disabled=False,
+                prefer_large_media=True,
+                show_above_text=True,
+            ),
+        )
+        meta["state"] = "INSTRUCTION"
+        meta["last_edit_at"] = time.time()
+    except TelegramBadRequest as e:
+        logging.error(f"accept->instruction edit: {e}")
     await cb.answer()
 
 
