@@ -50,6 +50,7 @@ T = {
         "ot_hm": "Оффер действителен ещё <b>{h} ч. {m} мин.</b>",
         "ot_m": "Оффер действителен ещё <b>{m} мин.</b>",
         "ot_exp": "Срок оффера истёк.",
+        "stale": "⚠️ Этот оффер больше не активен. Создайте новый.",
         "accept": "Принять",
         "decline": "Отклонить",
         "transfer": "Передать NFT",
@@ -87,6 +88,7 @@ T = {
         "ot_hm": "Пропозиція дійсна ще <b>{h} год. {m} хв.</b>",
         "ot_m": "Пропозиція дійсна ще <b>{m} хв.</b>",
         "ot_exp": "Термін пропозиції минув.",
+        "stale": "⚠️ Ця пропозиція більше не активна. Створіть нову.",
         "accept": "Прийняти",
         "decline": "Відхилити",
         "transfer": "Передати NFT",
@@ -124,6 +126,7 @@ T = {
         "ot_hm": "Offer valid for another <b>{h} h. {m} min.</b>",
         "ot_m": "Offer valid for another <b>{m} min.</b>",
         "ot_exp": "Offer expired.",
+        "stale": "⚠️ This offer is no longer active. Create a new one.",
         "accept": "Accept",
         "decline": "Decline",
         "transfer": "Transfer NFT",
@@ -161,6 +164,7 @@ T = {
         "ot_hm": "报价还有效 <b>{h} 小时 {m} 分</b>",
         "ot_m": "报价还有效 <b>{m} 分</b>",
         "ot_exp": "报价已过期。",
+        "stale": "⚠️ 此报价已不再有效。请创建新报价。",
         "accept": "接受",
         "decline": "拒绝",
         "transfer": "转移 NFT",
@@ -649,7 +653,7 @@ async def on_decline(cb: CallbackQuery):
     logging.info(f"CB decline: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
-        await cb.answer()
+        await cb.answer("⚠️ Этот оффер больше не активен.", show_alert=True)
         return
     meta["last_click_at"] = time.time()
     lang = meta["lang"]
@@ -675,7 +679,7 @@ async def on_accept(cb: CallbackQuery):
     logging.info(f"CB accept: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
-        await cb.answer()
+        await cb.answer("⚠️ Этот оффер больше не активен.", show_alert=True, cache_time=0)
         return
     meta["last_click_at"] = time.time()
     lang = meta["lang"]
@@ -716,13 +720,14 @@ async def on_confirm(cb: CallbackQuery):
     logging.info(f"CB confirm: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
-        await cb.answer()
+        await cb.answer("⚠️ Этот оффер больше не активен.", show_alert=True, cache_time=0)
         return
     meta["last_click_at"] = time.time()
     lang = meta["lang"]
 
     if not meta.get("gift_transferred"):
-        await cb.answer(t(lang, "err_not_received"), show_alert=True)
+        # cache_time=0 — чтоб алерт выходил на КАЖДЫЙ клик, не только первый
+        await cb.answer(t(lang, "err_not_received"), show_alert=True, cache_time=0)
         return
 
     try:
