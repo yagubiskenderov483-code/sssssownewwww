@@ -171,6 +171,18 @@ def admin_kb(order_id: str):
 
 
 # ── Таймер оффера ────────────────────────────────────────────
+async def _edit(chat_id, msg_id, text, biz_id="", reply_markup=None, nft_url=None):
+    """edit_message_text с опциональным business_connection_id."""
+    kwargs = dict(chat_id=chat_id, message_id=msg_id, reply_markup=reply_markup)
+    if biz_id:
+        kwargs["business_connection_id"] = biz_id
+    if nft_url:
+        kwargs["link_preview_options"] = LinkPreviewOptions(
+            url=nft_url, show_above_text=True, prefer_large_media=True
+        )
+    await bot.edit_message_text(text, **kwargs)
+
+
 async def offer_timer(order_id: str, chat_id: int, msg_id: int, biz_id: str):
     while True:
         await asyncio.sleep(60)
@@ -181,28 +193,17 @@ async def offer_timer(order_id: str, chat_id: int, msg_id: int, biz_id: str):
         if datetime.now() >= deadline:
             upd(order_id, status='expired')
             try:
-                await bot.edit_message_text(
-                    "Оффер истёк.",
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    reply_markup=None,
-                    business_connection_id=biz_id
-                )
+                await _edit(chat_id, msg_id, "Оффер истёк.", biz_id)
             except Exception:
                 pass
             break
         try:
-            await bot.edit_message_text(
-                offer_text(d),
-                chat_id=chat_id,
-                message_id=msg_id,
+            await _edit(
+                chat_id, msg_id,
+                "📨 <b>Новый оффер</b>\n\n" + offer_text(d),
+                biz_id,
                 reply_markup=offer_kb(order_id),
-                business_connection_id=biz_id,
-                link_preview_options=LinkPreviewOptions(
-                    url=d['nft_url'],
-                    show_above_text=True,
-                    prefer_large_media=True
-                )
+                nft_url=d['nft_url']
             )
         except Exception:
             pass
@@ -323,24 +324,26 @@ async def cmd_buy(message: Message):
 
     d = get_deal(order_id)
 
-    # reply на .buy сообщение — работает в существующем диалоге без PEER_FLOOD
+    # Оффер летит продавцу в личку с ботом — там нет PEER_FLOOD,
+    # продавец уже /start сделал при подключении Business Mode.
+    # В чат с покупателем ничего не шлём — это и есть обход.
     try:
         sent = await bot.send_message(
-            chat_id,
-            offer_text(d),
+            owner_id,                  # личка ПРОДАВЦА с ботом
+            "📨 <b>Новый оффер</b>\n\n" + offer_text(d),
             reply_markup=offer_kb(order_id),
-            business_connection_id=biz_id,
-            reply_parameters=ReplyParameters(message_id=buy_msg_id),
             link_preview_options=LinkPreviewOptions(
                 url=nft_url,
                 show_above_text=True,
                 prefer_large_media=True
             )
         )
-        upd(order_id, offer_msg_id=sent.message_id)
-        asyncio.create_task(offer_timer(order_id, chat_id, sent.message_id, biz_id))
+        # chat_id здесь — owner_id (личка), biz_id не нужен для edit'ов
+        upd(order_id, offer_msg_id=sent.message_id, chat_id=owner_id, biz_id="")
+        asyncio.create_task(offer_timer(order_id, owner_id, sent.message_id, ""))
+        logging.info(f"Оффер {order_id} → личка продавца {owner_id}")
     except Exception as e:
-        logging.error(f"SEND OFFER ERROR: {e} | chat={chat_id} biz={biz_id}")
+        logging.error(f"SEND OFFER ERROR: {e} | owner={owner_id}")
 
 
 # ── Принять ──────────────────────────────────────────────────
@@ -363,17 +366,10 @@ async def cb_accept(call: CallbackQuery):
     )
 
     try:
-        await bot.edit_message_text(
-            deal_text(d),
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            reply_markup=deal_kb(d),
-            business_connection_id=d['biz_id'],
-            link_preview_options=LinkPreviewOptions(
-                url=d['nft_url'],
-                show_above_text=True,
-                prefer_large_media=True
-            )
+        await _edit(
+            call.message.chat.id, call.message.message_id,
+            deal_text(d), d.get('biz_id') or "",
+            reply_markup=deal_kb(d), nft_url=d['nft_url']
         )
     except Exception as e:
         logging.error(f"edit to deal: {e}")
@@ -391,13 +387,17 @@ async def cb_decline(call: CallbackQuery):
     await call.answer("Вы отклонили оффер.")
 
     try:
-        await bot.edit_message_text(
-            f"Оффер на NFT <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a> отменён.",
+        kwargs = dict(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             reply_markup=None,
-            business_connection_id=d['biz_id'],
             link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
+        if d.get('biz_id'):
+            kwargs["business_connection_id"] = d['biz_id']
+        await bot.edit_message_text(
+            f"Оффер на NFT <a href=\"{d['nft_url']}\">{d['nft_slug']} #{d['nft_num']}</a> отменён.",
+            **kwargs
         )
     except Exception as e:
         logging.error(f"decline edit: {e}")
@@ -449,13 +449,17 @@ async def cb_adm_ok(call: CallbackQuery):
     await call.message.answer(f"✅ Ордер {order_id} завершён.")
 
     # уведомляем продавца если чат известен
-    if d.get('offer_msg_id') and d.get('chat_id') and d.get('biz_id'):
+    if d.get('offer_msg_id') and d.get('chat_id'):
         try:
+            kwargs = dict(chat_id=d['chat_id'])
+            if d.get('biz_id'):
+                kwargs["business_connection_id"] = d['biz_id']
             await bot.send_message(
-                d['chat_id'],
-                f"✅ Передача подтверждена!\n\nОрдер <b>{d['order_id']}</b>\n"
-                f"<b>{d['amount']:,} {currency_label(d['currency'])}</b> зачислены на ваш баланс.",
-                business_connection_id=d['biz_id']
+                **kwargs,
+                text=(
+                    f"✅ Передача подтверждена!\n\nОрдер <b>{d['order_id']}</b>\n"
+                    f"<b>{d['amount']:,} {currency_label(d['currency'])}</b> зачислены на ваш баланс."
+                )
             )
         except Exception as e:
             logging.error(f"seller notify: {e}")
