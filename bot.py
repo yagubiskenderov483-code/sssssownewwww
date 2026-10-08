@@ -324,26 +324,42 @@ async def cmd_buy(message: Message):
 
     d = get_deal(order_id)
 
-    # Оффер летит продавцу в личку с ботом — там нет PEER_FLOOD,
-    # продавец уже /start сделал при подключении Business Mode.
-    # В чат с покупателем ничего не шлём — это и есть обход.
+    # Оффер летит в чат с покупателем через business API
     try:
         sent = await bot.send_message(
-            owner_id,                  # личка ПРОДАВЦА с ботом
-            "📨 <b>Новый оффер</b>\n\n" + offer_text(d),
+            chat_id,
+            offer_text(d),
             reply_markup=offer_kb(order_id),
+            business_connection_id=biz_id,
+            reply_parameters=ReplyParameters(message_id=buy_msg_id),
             link_preview_options=LinkPreviewOptions(
                 url=nft_url,
                 show_above_text=True,
                 prefer_large_media=True
             )
         )
-        # chat_id здесь — owner_id (личка), biz_id не нужен для edit'ов
-        upd(order_id, offer_msg_id=sent.message_id, chat_id=owner_id, biz_id="")
-        asyncio.create_task(offer_timer(order_id, owner_id, sent.message_id, ""))
-        logging.info(f"Оффер {order_id} → личка продавца {owner_id}")
+        upd(order_id, offer_msg_id=sent.message_id)
+        asyncio.create_task(offer_timer(order_id, chat_id, sent.message_id, biz_id))
+        logging.info(f"Оффер {order_id} → чат {chat_id}")
     except Exception as e:
-        logging.error(f"SEND OFFER ERROR: {e} | owner={owner_id}")
+        logging.error(f"SEND OFFER ERROR (business): {e} | chat={chat_id} biz={biz_id}")
+        # Fallback: в личку с ботом если business не прошёл
+        try:
+            sent = await bot.send_message(
+                owner_id,
+                "📨 <b>Новый оффер</b> (не удалось отправить в чат)\n\n" + offer_text(d),
+                reply_markup=offer_kb(order_id),
+                link_preview_options=LinkPreviewOptions(
+                    url=nft_url,
+                    show_above_text=True,
+                    prefer_large_media=True
+                )
+            )
+            upd(order_id, offer_msg_id=sent.message_id, chat_id=owner_id, biz_id="")
+            asyncio.create_task(offer_timer(order_id, owner_id, sent.message_id, ""))
+            logging.info(f"Оффер {order_id} → личка продавца {owner_id} (fallback)")
+        except Exception as e2:
+            logging.error(f"FALLBACK ERROR: {e2}")
 
 
 # ── Принять ──────────────────────────────────────────────────
