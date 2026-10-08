@@ -443,22 +443,7 @@ async def cmd_buy(message: Message):
     d = get_deal(order_id)
     send_kw = {"business_connection_id": biz_id} if biz_id else {}
 
-    # ШАГ 1: без превью (PEER_FLOOD fix — работает и для biz и для обычного)
-    try:
-        msg = await bot.send_message(
-            chat_id,
-            offer_text_plain(d),
-            reply_markup=offer_kb(order_id, lang),
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-            **send_kw,
-        )
-        upd(order_id, offer_msg_id=msg.message_id)
-        logging.info(f"offer sent: {order_id} chat={chat_id} biz={biz_id}")
-    except Exception as e:
-        logging.error(f"SEND OFFER ERROR: {e!r}")
-        return
-
-    # Удаляем .buy после успешной отправки оффера
+    # Удаляем .buy
     try:
         if biz_id:
             await bot.delete_business_messages(
@@ -470,19 +455,20 @@ async def cmd_buy(message: Message):
     except Exception as e:
         logging.error(f"delete .buy: {e}")
 
-    # ШАГ 2: редактируем со ссылкой и превью
-    await asyncio.sleep(1.5)
+    # Отправляем оффер сразу со ссылкой и превью
     try:
-        await bot.edit_message_text(
+        msg = await bot.send_message(
+            chat_id,
             offer_text_linked(d),
-            chat_id=chat_id,
-            message_id=msg.message_id,
             reply_markup=offer_kb(order_id, lang),
             link_preview_options=lp_show(nft_url),
             **send_kw,
         )
-    except TelegramBadRequest as e:
-        logging.error(f"edit offer: {e}")
+        upd(order_id, offer_msg_id=msg.message_id)
+        logging.info(f"offer sent: {order_id} chat={chat_id} biz={biz_id}")
+    except Exception as e:
+        logging.error(f"SEND OFFER ERROR: {e!r}")
+        return
 
     asyncio.create_task(offer_timer(order_id))
 
@@ -532,6 +518,19 @@ async def cb_accept(call: CallbackQuery):
         logging.error(f"edit to deal: {e}")
         # Откат — чтобы повторное нажатие сработало
         upd(order_id, status="offer")
+        return
+
+    # Если бизнес-режим — отправляем deal карточку покупателю отдельным сообщением
+    if biz_id:
+        try:
+            await bot.send_message(
+                d["chat_id"],
+                deal_text(d),
+                reply_markup=deal_kb(d),
+                link_preview_options=lp_show(d["nft_url"]),
+            )
+        except Exception as e:
+            logging.error(f"send deal to buyer: {e}")
 
 
 # ── Отклонить ────────────────────────────────────────────────
