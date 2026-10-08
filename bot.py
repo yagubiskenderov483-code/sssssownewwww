@@ -15,7 +15,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.types import (
     BusinessConnection, CallbackQuery,
-    InlineKeyboardButton, Message, LinkPreviewOptions
+    InlineKeyboardButton, Message, LinkPreviewOptions,
+    ReplyParameters
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -308,8 +309,7 @@ async def cmd_buy(message: Message):
     order_id       = gen_order_id()
     buyer_username = message.from_user.username or str(owner_id)
     sent_at        = datetime.now().isoformat()
-
-    # не удаляем .buy — просто отправляем оффер поверх
+    buy_msg_id     = message.message_id  # ID самого .buy сообщения
 
     # сохраняем сделку
     db.execute("""
@@ -323,13 +323,14 @@ async def cmd_buy(message: Message):
 
     d = get_deal(order_id)
 
-    # отправляем оффер в чат — КЛЮЧЕВОЕ: business_connection_id
+    # reply на .buy сообщение — работает в существующем диалоге без PEER_FLOOD
     try:
         sent = await bot.send_message(
             chat_id,
             offer_text(d),
             reply_markup=offer_kb(order_id),
             business_connection_id=biz_id,
+            reply_parameters=ReplyParameters(message_id=buy_msg_id),
             link_preview_options=LinkPreviewOptions(
                 url=nft_url,
                 show_above_text=True,
