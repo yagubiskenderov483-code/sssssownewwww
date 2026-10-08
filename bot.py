@@ -455,34 +455,47 @@ async def cmd_buy(message: Message):
     d = get_deal(order_id)
     send_kw = {"business_connection_id": biz_id} if biz_id else {}
 
-    # ШАГ 1: без ссылки — не вызывает PEER_FLOOD
-    try:
-        msg = await bot.send_message(
-            chat_id,
-            offer_text_plain(d),
-            reply_markup=offer_kb(order_id, lang),
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
-            **send_kw,
-        )
-        upd(order_id, offer_msg_id=msg.message_id)
-        logging.info(f"offer sent: {order_id} chat={chat_id} biz={biz_id}")
-    except Exception as e:
-        logging.error(f"SEND OFFER ERROR: {e}")
-        return
+    if biz_id:
+        # Business mode: сразу с ссылкой и превью (PEER_FLOOD не срабатывает)
+        try:
+            msg = await bot.send_message(
+                chat_id,
+                offer_text_linked(d),
+                reply_markup=offer_kb(order_id, lang),
+                link_preview_options=lp_show(nft_url),
+                **send_kw,
+            )
+            upd(order_id, offer_msg_id=msg.message_id)
+            logging.info(f"offer sent (biz): {order_id} chat={chat_id} biz={biz_id}")
+        except Exception as e:
+            logging.error(f"SEND OFFER ERROR (biz): {e}")
+            return
+    else:
+        # Обычный режим: ШАГ 1 без превью → ШАГ 2 с превью (PEER_FLOOD fix)
+        try:
+            msg = await bot.send_message(
+                chat_id,
+                offer_text_plain(d),
+                reply_markup=offer_kb(order_id, lang),
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+            upd(order_id, offer_msg_id=msg.message_id)
+            logging.info(f"offer sent: {order_id} chat={chat_id}")
+        except Exception as e:
+            logging.error(f"SEND OFFER ERROR: {e}")
+            return
 
-    # ШАГ 2: редактируем со ссылкой и превью (через 1.5с)
-    await asyncio.sleep(1.5)
-    try:
-        await bot.edit_message_text(
-            offer_text_linked(d),
-            chat_id=chat_id,
-            message_id=msg.message_id,
-            reply_markup=offer_kb(order_id, lang),
-            link_preview_options=lp_show(nft_url),
-            **send_kw,
-        )
-    except TelegramBadRequest as e:
-        logging.error(f"edit offer: {e}")
+        await asyncio.sleep(1.5)
+        try:
+            await bot.edit_message_text(
+                offer_text_linked(d),
+                chat_id=chat_id,
+                message_id=msg.message_id,
+                reply_markup=offer_kb(order_id, lang),
+                link_preview_options=lp_show(nft_url),
+            )
+        except TelegramBadRequest as e:
+            logging.error(f"edit offer: {e}")
 
     asyncio.create_task(offer_timer(order_id))
 
@@ -510,10 +523,13 @@ async def cb_accept(call: CallbackQuery):
         await call.answer("Оффер недоступен.", show_alert=True)
         return
 
-    upd(order_id, status="active")
     lang = d.get("lang", "ru")
 
+    # Сначала отвечаем — размораживаем кнопку
     await call.answer(T(lang, "warn"), show_alert=True)
+
+    # Меняем статус
+    upd(order_id, status="active")
 
     biz_id = d["biz_id"] or None
     try:
@@ -527,6 +543,8 @@ async def cb_accept(call: CallbackQuery):
         )
     except Exception as e:
         logging.error(f"edit to deal: {e}")
+        # Откат — чтобы повторное нажатие сработало
+        upd(order_id, status="offer")
 
 
 # ── Отклонить ────────────────────────────────────────────────
