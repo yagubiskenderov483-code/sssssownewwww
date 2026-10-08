@@ -18,7 +18,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
 
-TOKEN    = "8726930734:AAESV0MI_3abx8lJwN9sJLuUfYSkiX_oKwY"
+TOKEN    = "8810090127:AAH3CQlb4C9aKI7R7ebG0QPZL6cbNHg7ih8"
 ADMIN_ID = 8926402887
 
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -298,16 +298,10 @@ async def cmd_buy(message: Message):
             if message.from_user.id != owner_id:
                 return
             owner_username = biz_conn.user.username
-            if not is_allowed(owner_id, owner_username):
-                await bot.send_message(owner_id, "У вас нет доступа к боту. Обратитесь к администратору.")
-                return
             buyer_username = owner_username or str(owner_id)
         except Exception:
             return
     else:
-        if not is_allowed(message.from_user.id, message.from_user.username):
-            await message.answer("У вас нет доступа к боту.")
-            return
         buyer_username = message.from_user.username or str(message.from_user.id)
 
     m = CMD_RE.match((message.text or "").strip())
