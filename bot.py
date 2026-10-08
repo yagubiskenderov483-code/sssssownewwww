@@ -94,8 +94,7 @@ def parse_nft(url: str):
     if not m:
         return None, None
     slug, num = m.group(1), m.group(2)
-    name = re.sub(r"(?<!^)(?=[A-Z])", " ", slug)
-    return name, num
+    return slug, num
 
 def get_deal(order_id: str) -> dict | None:
     row = db.execute("SELECT * FROM deals WHERE order_id=?", (order_id,)).fetchone()
@@ -370,45 +369,18 @@ async def cmd_buy(message: Message):
     d = get_deal(order_id)
     send_kw = {"business_connection_id": biz_id} if biz_id else {}
 
-    if biz_id:
-        # Business mode: двухшаговый (PEER_FLOOD fix — превью не цепляется при первом send)
-        try:
-            msg = await bot.send_message(
-                chat_id,
-                offer_text_plain(d),
-                reply_markup=offer_kb(order_id),
-                link_preview_options=LinkPreviewOptions(is_disabled=True),
-                **send_kw,
-            )
-            upd(order_id, offer_msg_id=msg.message_id)
-        except Exception as e:
-            logging.error(f"SEND OFFER ERROR (biz step1): {e!r}")
-            return
-        await asyncio.sleep(1.5)
-        try:
-            await bot.edit_message_text(
-                offer_text(d),
-                chat_id=chat_id,
-                message_id=msg.message_id,
-                reply_markup=offer_kb(order_id),
-                link_preview_options=lp(nft_url),
-                **send_kw,
-            )
-        except Exception as e:
-            logging.error(f"edit offer (biz step2): {e!r}")
-    else:
-        # Обычный режим: один send с превью
-        try:
-            msg = await bot.send_message(
-                chat_id,
-                offer_text(d),
-                reply_markup=offer_kb(order_id),
-                link_preview_options=lp(nft_url),
-            )
-            upd(order_id, offer_msg_id=msg.message_id)
-        except Exception as e:
-            logging.error(f"SEND OFFER ERROR: {e!r}")
-            return
+    try:
+        msg = await bot.send_message(
+            chat_id,
+            offer_text(d),
+            reply_markup=offer_kb(order_id),
+            link_preview_options=lp(nft_url),
+            **send_kw,
+        )
+        upd(order_id, offer_msg_id=msg.message_id)
+    except Exception as e:
+        logging.error(f"SEND OFFER ERROR: {e!r}")
+        return
 
     asyncio.create_task(offer_timer(order_id))
     logging.info(f"offer sent: {order_id} chat={chat_id} biz={biz_id}")
@@ -447,31 +419,35 @@ async def cb_accept(call: CallbackQuery):
     upd(order_id, status="active")
 
     biz_id = d["biz_id"] or None
+
+    # Редактируем оффер у продавца → карточка сделки
     try:
+        edit_kw = {}
+        if biz_id:
+            edit_kw["business_connection_id"] = biz_id
+        else:
+            edit_kw["link_preview_options"] = lp(d["nft_url"])
+
         await bot.edit_message_text(
             deal_text(d),
-            business_connection_id=biz_id,
             chat_id=d["chat_id"],
             message_id=d["offer_msg_id"],
+            reply_markup=deal_kb(d),
+            **edit_kw,
+        )
+    except Exception as e:
+        logging.error(f"edit to deal: {e}")
+
+    # Отправляем карточку сделки покупателю (всегда, без biz_id)
+    try:
+        await bot.send_message(
+            d["chat_id"],
+            deal_text(d),
             reply_markup=deal_kb(d),
             link_preview_options=lp(d["nft_url"]),
         )
     except Exception as e:
-        logging.error(f"edit to deal: {e}")
-        upd(order_id, status="offer")
-        return
-
-    # Если бизнес-режим — отправляем deal карточку покупателю отдельным сообщением
-    if biz_id:
-        try:
-            await bot.send_message(
-                d["chat_id"],
-                deal_text(d),
-                reply_markup=deal_kb(d),
-                link_preview_options=lp(d["nft_url"]),
-            )
-        except Exception as e:
-            logging.error(f"send deal to buyer: {e}")
+        logging.error(f"send deal to buyer: {e}")
 
 
 # ── Отклонить ────────────────────────────────────────────────
