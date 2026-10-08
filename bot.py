@@ -74,7 +74,7 @@ T = {
         "instr_foot_2": "на ваш баланс. Резерв действует 24 часа.",
         "err_not_received": "❌ Ошибка: товар не получен. Попробуйте передать и подтвердить ещё раз.",
         "done_t": "Сделка завершена!",
-        "done_b": "Ордер #{oid} выполнен.",
+        "done_b": "Ордер {oid} выполнен.",
         "done_credit": "зачислено на баланс.",
         "declined": "Оффер отклонён.",
         "expired": "⌛ Срок оффера истёк.",
@@ -111,7 +111,7 @@ T = {
         "instr_foot_2": "на ваш баланс. Резерв діє 24 години.",
         "err_not_received": "❌ Помилка: товар не отримано. Спробуйте передати і підтвердити ще раз.",
         "done_t": "Угоду завершено!",
-        "done_b": "Ордер #{oid} виконано.",
+        "done_b": "Ордер {oid} виконано.",
         "done_credit": "зараховано на баланс.",
         "declined": "Пропозицію відхилено.",
         "expired": "⌛ Термін пропозиції минув.",
@@ -148,7 +148,7 @@ T = {
         "instr_foot_2": "to your balance. Reservation is valid for 24 hours.",
         "err_not_received": "❌ Error: gift not received. Try sending and confirming again.",
         "done_t": "Deal completed!",
-        "done_b": "Order #{oid} fulfilled.",
+        "done_b": "Order {oid} fulfilled.",
         "done_credit": "credited to your balance.",
         "declined": "Offer declined.",
         "expired": "⌛ Offer expired.",
@@ -184,7 +184,7 @@ T = {
         "instr_foot_2": "记入您的余额。预留有效期为 24 小时。",
         "err_not_received": "❌ 错误：未收到礼物。请再次尝试转移并确认。",
         "done_t": "交易完成！",
-        "done_b": "订单 #{oid} 已完成。",
+        "done_b": "订单 {oid} 已完成。",
         "done_credit": "已记入余额。",
         "declined": "报价已拒绝。",
         "expired": "⌛ 报价已过期。",
@@ -302,10 +302,10 @@ def build_instruction(amount, currency, gift_name, gift_num, order_id, lang, use
     rec = f"@{username}" if username else (
         f'<a href="tg://user?id={user_id}">id{user_id}</a>' if user_id else "—"
     )
-    # сильная ссылка на nft в заголовке даёт превью (с show_above_text=True она уйдёт вверх)
     gift_link = f'<b><a href="{nft_url}">{gift_name} #{gift_num}</a></b>'
+    # БЕЗ таймера в конце и БЕЗ # перед order_id
     return (
-        f'<i>{t(lang, "order_lbl")} #{order_id}</i>\n\n'
+        f'<i>{t(lang, "order_lbl")} {order_id}</i>\n\n'
         f'{t(lang, "instr_title")} {amount_only(amount, currency)} '
         f'{t(lang, "instr_via")} {t(lang, "instr_body")}\n\n'
         f'<b>{t(lang, "instr_head")}</b>\n'
@@ -313,8 +313,7 @@ def build_instruction(amount, currency, gift_name, gift_num, order_id, lang, use
         f'{t(lang, "instr_s2")} {gift_link}\n'
         f'{t(lang, "instr_s3")}\n\n'
         f'{t(lang, "instr_foot_1")} {amount_only(amount, currency)} '
-        f'{t(lang, "instr_foot_2")}\n\n'
-        f'{fmt_remaining(expires_at, lang)}'
+        f'{t(lang, "instr_foot_2")}'
     )
 
 
@@ -476,10 +475,20 @@ async def timer_loop():
                 if meta["expires_at"] <= now:
                     dead.append(order_id)
                     continue
-                # сохраняем состояние "with_preview": OFFER показывается с превью после 1.5s edit
-                with_preview = meta.get("preview_shown", False) and meta["state"] in ("OFFER", "ALERT_SHOWN")
+                # таймер показывается только на карточке оффера (до "Принять")
+                if meta["state"] not in ("OFFER", "ALERT_SHOWN"):
+                    continue
+                last_click = meta.get("last_click_at", 0)
+                if now - last_click < RECENT_CLICK_GRACE:
+                    continue
+                last_edit = meta.get("last_edit_at", 0)
+                if now - last_edit < TIMER_MIN_EDIT_GAP:
+                    continue
+
+                with_preview = meta.get("preview_shown", False)
                 await render_offer(meta, order_id, with_preview)
-                await asyncio.sleep(0.05)  # лёгкая пауза между правками
+                meta["last_edit_at"] = time.time()
+                await asyncio.sleep(0.05)
 
             for order_id in dead:
                 meta = PENDING.pop(order_id, None)
@@ -636,6 +645,7 @@ async def on_decline(cb: CallbackQuery):
     if not meta:
         await cb.answer()
         return
+    meta["last_click_at"] = time.time()
     lang = meta["lang"]
     try:
         await bot.edit_message_text(
@@ -661,14 +671,17 @@ async def on_accept(cb: CallbackQuery):
     if not meta:
         await cb.answer()
         return
+    meta["last_click_at"] = time.time()
     lang = meta["lang"]
 
-    # уже в инструкции — только показываем alert (без повторного edit)
+    # СНАЧАЛА показываем модальный alert — чтоб точно вылез даже если edit тупит
+    await cb.answer(t(lang, "alert"), show_alert=True)
+
+    # уже в инструкции — не редактируем повторно
     if meta["state"] == "INSTRUCTION":
-        await cb.answer(t(lang, "alert"), show_alert=True)
         return
 
-    # один клик: разворачиваем инструкцию + показываем модальный alert одновременно
+    # ПОТОМ разворачиваем сообщение в инструкцию
     try:
         await bot.edit_message_text(
             chat_id=meta["chat_id"],
@@ -689,11 +702,9 @@ async def on_accept(cb: CallbackQuery):
             ),
         )
         meta["state"] = "INSTRUCTION"
+        meta["last_edit_at"] = time.time()
     except TelegramBadRequest as e:
         logging.error(f"accept->instruction edit: {e}")
-
-    # модальный alert поверх развёрнутой инструкции
-    await cb.answer(t(lang, "alert"), show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("confirm:"))
@@ -704,6 +715,7 @@ async def on_confirm(cb: CallbackQuery):
     if not meta:
         await cb.answer()
         return
+    meta["last_click_at"] = time.time()
     lang = meta["lang"]
 
     if not meta.get("gift_transferred"):
