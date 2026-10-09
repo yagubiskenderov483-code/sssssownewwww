@@ -7,7 +7,7 @@ from aiogram.types import (
     Message, InlineKeyboardMarkup, InlineKeyboardButton,
     LinkPreviewOptions, BusinessConnection, CallbackQuery,
 )
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter, TelegramNetworkError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,9 +16,9 @@ logging.basicConfig(
 
 BOT_TOKEN = "8516600626:AAHkWQ2mdcqPfzR5gNe_a5uMfZB13y7P8-A"
 OFFER_TTL = 6 * 3600  # 6 часов в секундах
-TIMER_TICK = 60  # опрос раз в минуту
-TIMER_MIN_EDIT_GAP = 60  # редактировать сообщение не чаще раза в 60 сек
-RECENT_CLICK_GRACE = 10  # после клика не трогать 10 сек
+TIMER_TICK = 300  # опрос раз в 5 минут
+TIMER_MIN_EDIT_GAP = 300  # редактировать сообщение не чаще раза в 5 минут
+RECENT_CLICK_GRACE = 30  # после клика не трогать 30 сек
 
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
@@ -443,6 +443,7 @@ async def render_offer(meta: dict, order_id: str, with_preview: bool):
             kb = kb_offer(lang, order_id)
             lpo = LinkPreviewOptions(
                 is_disabled=not with_preview,
+                url=meta["nft_url"] if with_preview else None,
                 prefer_large_media=True,
                 show_above_text=True,
             )
@@ -469,10 +470,17 @@ async def render_offer(meta: dict, order_id: str, with_preview: bool):
             business_connection_id=meta["bcid"],
             link_preview_options=lpo,
         )
+    except TelegramRetryAfter as e:
+        logging.warning(f"render_offer rate-limited: retry after {e.retry_after}s")
+        # помечаем чтоб не редактировать ещё минимум retry_after секунд
+        meta["last_edit_at"] = time.time() + e.retry_after
     except TelegramBadRequest as e:
-        # "message is not modified" — норм, пропускаем
         if "not modified" not in str(e):
             logging.error(f"render_offer edit: {e}")
+    except TelegramNetworkError as e:
+        logging.warning(f"render_offer network: {e}")
+    except Exception as e:
+        logging.error(f"render_offer unexpected: {e}")
 
 
 async def timer_loop():
@@ -538,6 +546,13 @@ async def handle_business_connection(bc: BusinessConnection):
 
 @dp.business_message()
 async def handle_business_message(message: Message):
+    try:
+        await _handle_business_message_inner(message)
+    except Exception as e:
+        logging.exception(f"handle_business_message crash: {e}")
+
+
+async def _handle_business_message_inner(message: Message):
     bcid = message.business_connection_id
     if not bcid:
         return
@@ -560,6 +575,13 @@ async def handle_business_message(message: Message):
         logging.warning(f"no owner info for bcid={bcid}, skipping offer")
         return
 
+    # команду .buy могут писать ТОЛЬКО сам владелец бизнес-аккаунта
+    # собеседник пишет — игнорим, его .buy не триггерит оффер
+    sender_id = message.from_user.id if message.from_user else None
+    if user_id and sender_id and sender_id != user_id:
+        logging.info(f"ignoring .buy from non-owner (sender={sender_id}, owner={user_id})")
+        return
+
     link, amount, currency, lang = parsed
     gift = parse_gift(link)
     if not gift:
@@ -572,14 +594,25 @@ async def handle_business_message(message: Message):
 
     logging.info(f"new offer {order_id}: {gift_name}#{gift_num} for {amount} {currency}")
 
+    # Шлём сразу с превью одним сообщением. Клавиатура создаётся один раз —
+    # кнопки остаются валидными (edit позже их инвалидирует в business-режиме).
+    offer_text = build_offer_short(amount, currency, gift_name, gift_num, lang, expires_at, nft_url)
     try:
         sent = await bot.send_message(
             chat_id=message.chat.id,
-            text=build_offer_short(amount, currency, gift_name, gift_num, lang, expires_at),
+            text=offer_text,
             reply_markup=kb_offer(lang, order_id),
             business_connection_id=bcid,
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
+            link_preview_options=LinkPreviewOptions(
+                is_disabled=False,
+                url=nft_url,
+                prefer_large_media=True,
+                show_above_text=True,
+            ),
         )
+    except TelegramRetryAfter as e:
+        logging.warning(f"send rate-limited: retry after {e.retry_after}s")
+        return
     except Exception as e:
         logging.error(f"send error: {e}")
         return
@@ -608,28 +641,11 @@ async def handle_business_message(message: Message):
         "state": "OFFER",
         "gift_transferred": False,
         "expires_at": expires_at,
-        "preview_shown": False,
+        "preview_shown": True,
     }
     GIFT_INDEX[(bcid, slug, gift_num)] = order_id
 
-    # ШАГ 2: добавляем превью
-    await asyncio.sleep(0.8)
-    try:
-        await bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=sent.message_id,
-            text=build_offer_short(amount, currency, gift_name, gift_num, lang, expires_at, nft_url),
-            reply_markup=kb_offer(lang, order_id),
-            business_connection_id=bcid,
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=False,
-                prefer_large_media=True,
-                show_above_text=True,
-            ),
-        )
-        PENDING[order_id]["preview_shown"] = True
-    except TelegramBadRequest as e:
-        logging.error(f"preview edit: {e}")
+
 
 
 @dp.edited_business_message()
