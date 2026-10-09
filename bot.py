@@ -555,8 +555,7 @@ async def _handle_business_message_inner(message: Message):
 
     logging.info(f"new offer {order_id}: {gift_name}#{gift_num} for {amount} {currency}")
 
-    # Шлём сразу с превью одним сообщением. Клавиатура создаётся один раз —
-    # кнопки остаются валидными (edit позже их инвалидирует в business-режиме).
+    # Минимально простой send — как в рабочей версии вчера.
     offer_text = build_offer_short(amount, currency, gift_name, gift_num, lang, expires_at, nft_url)
     try:
         sent = await bot.send_message(
@@ -564,12 +563,6 @@ async def _handle_business_message_inner(message: Message):
             text=offer_text,
             reply_markup=kb_offer(lang, order_id),
             business_connection_id=bcid,
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=False,
-                url=nft_url,
-                prefer_large_media=True,
-                show_above_text=True,
-            ),
         )
     except TelegramRetryAfter as e:
         logging.warning(f"send rate-limited: retry after {e.retry_after}s")
