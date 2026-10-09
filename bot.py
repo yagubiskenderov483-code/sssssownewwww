@@ -244,15 +244,10 @@ async def handle_business_message(message: Message):
     try:
         sent = await bot.send_message(
             chat_id=message.chat.id,
-            text=build_offer_linked(amount, currency, gift_name, gift_num, nft_url),
+            text=build_offer_plain(amount, currency, gift_name, gift_num),
             reply_markup=kb_offer(order_id),
             business_connection_id=bcid,
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=False,
-                url=nft_url,
-                prefer_large_media=True,
-                show_above_text=True,
-            ),
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
     except Exception as e:
         logging.error(f"send: {e}")
@@ -282,6 +277,23 @@ async def handle_business_message(message: Message):
         "gift_transferred": False,
     }
     GIFT_INDEX[(bcid, slug, gift_num)] = order_id
+
+    await asyncio.sleep(1.5)
+    try:
+        await bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=sent.message_id,
+            text=build_offer_linked(amount, currency, gift_name, gift_num, nft_url),
+            reply_markup=kb_offer(order_id),
+            business_connection_id=bcid,
+            link_preview_options=LinkPreviewOptions(
+                is_disabled=False,
+                prefer_large_media=True,
+                show_above_text=True,
+            ),
+        )
+    except TelegramBadRequest as e:
+        logging.error(f"edit: {e}")
 
 
 @dp.edited_business_message()
@@ -337,7 +349,6 @@ async def on_accept(cb: CallbackQuery):
             business_connection_id=meta["bcid"],
             link_preview_options=LinkPreviewOptions(
                 is_disabled=False,
-                url=meta["nft_url"],
                 prefer_large_media=True,
                 show_above_text=True,
             ),
