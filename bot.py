@@ -70,51 +70,54 @@ def amount_only(amount, currency):
 
 def build_offer_plain(amount, currency, gift_name, gift_num):
     return (
-        f'Пользователь предлагает вам {amount_only(amount, currency)} '
-        f'за подарок <b>{gift_name} #{gift_num}</b>.\n\n'
-        f'Оффер действителен ещё <b>6 ч.</b>'
+        f'Поступило предложение {amount_only(amount, currency)} '
+        f'за ваш подарок <b>{gift_name} #{gift_num}</b>.\n\n'
+        f'⏳ Срок действия предложения — <b>6 часов</b>.'
     )
 
 
 def build_offer_linked(amount, currency, gift_name, gift_num, url):
     return (
-        f'Пользователь предлагает вам {amount_only(amount, currency)} '
-        f'за подарок <b><a href="{url}">{gift_name} #{gift_num}</a></b>.\n\n'
-        f'Оффер действителен ещё <b>6 ч.</b>'
+        f'Поступило предложение {amount_only(amount, currency)} '
+        f'за ваш подарок <b><a href="{url}">{gift_name} #{gift_num}</a></b>.\n\n'
+        f'⏳ Срок действия предложения — <b>6 часов</b>.'
     )
 
 
 def build_instruction(amount, currency, gift_name, gift_num, order_id, username, user_id, nft_url):
     rec = f"@{username}" if username else (
-        f'<a href="tg://user?id={user_id}">id{user_id}</a>' if user_id else "—"
+        f'<a href="tg://user?id={user_id}">профилю покупателя</a>' if user_id else "—"
     )
     gift_link = f'<b><a href="{nft_url}">{gift_name} #{gift_num}</a></b>'
     return (
         f'<i>Ордер {order_id}</i>\n\n'
-        f'Покупатель зарезервировал {amount_only(amount, currency)} через эскроу-систему Telegram. '
-        f'Средства хранятся на специальном эскроу-счёте и будут автоматически зачислены на ваш баланс '
-        f'Telegram Stars сразу после передачи подарка.\n\n'
-        f'<b>Инструкция для завершения сделки:</b>\n'
-        f'1. Передайте подарок пользователю: {rec}\n'
-        f'2. Нажмите «Передать NFT» и выберите {gift_link}\n'
-        f'3. Подтвердите передачу подарка.\n\n'
-        f'Telegram зафиксирует транзакцию и моментально зачислит {amount_only(amount, currency)} '
-        f'на ваш баланс. Резерв действует 24 часа.'
+        f'🔒 Покупатель внёс {amount_only(amount, currency)} в депозит Telegram Escrow. '
+        f'Средства заблокированы на эскроу-счёте и будут автоматически переведены на ваш '
+        f'баланс Telegram Stars сразу после того, как вы передадите подарок.\n\n'
+        f'<b>Как завершить сделку:</b>\n'
+        f'1️⃣ Откройте профиль покупателя — {rec}\n'
+        f'2️⃣ Нажмите кнопку «Передать NFT» и выберите {gift_link}\n'
+        f'3️⃣ После передачи нажмите «Подтвердить передачу»\n\n'
+        f'После подтверждения Telegram проверит транзакцию и мгновенно зачислит '
+        f'{amount_only(amount, currency)} на ваш баланс.\n\n'
+        f'🕒 Депозит действует 24 часа. По истечении срока средства автоматически '
+        f'возвращаются покупателю.'
     )
 
 
 def build_accepted(amount, currency, order_id):
     return (
-        f'{em(E_CHECK, "✅")} <b>Сделка завершена!</b>\n\n'
-        f'Ордер {order_id} выполнен.\n'
-        f'{amount_only(amount, currency)} зачислено на баланс.'
+        f'{em(E_CHECK, "✅")} <b>Сделка успешно завершена</b>\n\n'
+        f'Ордер <code>{order_id}</code> закрыт.\n'
+        f'На ваш баланс зачислено {amount_only(amount, currency)}.\n\n'
+        f'Спасибо за использование Telegram Escrow 🤝'
     )
 
 
 def kb_offer(order_id):
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Отклонить", callback_data=f"decline:{order_id}"),
-        InlineKeyboardButton(text="Принять", callback_data=f"accept:{order_id}"),
+        InlineKeyboardButton(text="✖️ Отклонить", callback_data=f"decline:{order_id}"),
+        InlineKeyboardButton(text="✅ Принять", callback_data=f"accept:{order_id}"),
     ]])
 
 
@@ -126,8 +129,8 @@ def kb_instruction(order_id, username, user_id):
     else:
         send_url = "tg://settings"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Передать NFT ↗", url=send_url)],
-        [InlineKeyboardButton(text="Подтвердить передачу", callback_data=f"confirm:{order_id}")],
+        [InlineKeyboardButton(text="🎁 Передать NFT ↗", url=send_url)],
+        [InlineKeyboardButton(text="✅ Подтвердить передачу", callback_data=f"confirm:{order_id}")],
     ])
 
 
@@ -256,7 +259,7 @@ async def handle_business_message(message: Message):
     }
     GIFT_INDEX[(bcid, slug, gift_num)] = order_id
 
-    # ШАГ 2: со ссылкой — для превью
+    # ШАГ 2: со ссылкой — для превью.
     await asyncio.sleep(1.5)
     try:
         await bot.edit_message_text(
@@ -293,7 +296,7 @@ async def on_decline(cb: CallbackQuery):
         await bot.edit_message_text(
             chat_id=meta["chat_id"],
             message_id=meta["msg_id"],
-            text="❌ Оффер отклонён.",
+            text="✖️ Предложение отклонено.\n\nПокупатель получит уведомление, депозит разморожен.",
             reply_markup=None,
             business_connection_id=meta["bcid"],
             link_preview_options=LinkPreviewOptions(is_disabled=True),
@@ -308,9 +311,11 @@ async def on_decline(cb: CallbackQuery):
 @dp.callback_query(F.data.startswith("accept:"))
 async def on_accept(cb: CallbackQuery):
     order_id = cb.data.split(":", 1)[1]
+    logging.info(f"CB accept: order={order_id} from={cb.from_user.id}")
     meta = PENDING.get(order_id)
     if not meta:
-        await cb.answer()
+        logging.warning(f"CB accept: no PENDING for {order_id}")
+        await cb.answer("⚠️ Это предложение больше не активно.", show_alert=True)
         return
     if meta["state"] == "INSTRUCTION":
         await cb.answer()
@@ -349,7 +354,8 @@ async def on_confirm(cb: CallbackQuery):
         return
     if not meta.get("gift_transferred"):
         await cb.answer(
-            "❌ Ошибка: товар не получен. Попробуйте передать и подтвердить ещё раз.",
+            "⚠️ Передача подарка не зафиксирована.\n\n"
+            "Передайте NFT через кнопку «Передать NFT» и затем подтвердите снова.",
             show_alert=True,
         )
         return
@@ -372,9 +378,13 @@ async def on_confirm(cb: CallbackQuery):
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
-        "🎁 Пришли ссылку на подарок и сумму, например:\n"
-        "https://t.me/nft/SnoopDogg-103841 740\n"
-        "или с GRAM: https://t.me/nft/SnoopDogg-103841 740 g"
+        "👋 <b>Привет! Это Telegram Escrow Bot</b>\n\n"
+        "Я помогаю безопасно продавать NFT-подарки через встроенную эскроу-систему Telegram.\n\n"
+        "<b>Как создать предложение:</b>\n"
+        "Отправьте ссылку на подарок и сумму. Примеры:\n\n"
+        "<code>https://t.me/nft/SnoopDogg-103841 740</code> — в звёздах\n"
+        "<code>https://t.me/nft/SnoopDogg-103841 740 g</code> — в GRAM\n\n"
+        "🔒 Все средства защищены эскроу Telegram."
     )
 
 
