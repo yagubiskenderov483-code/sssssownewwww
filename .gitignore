@@ -2,7 +2,12 @@ __pycache__/
 *.pyc
 *.pyo
 .env
-deals.db
+.env.*
+!.env.example
 *.db
+*.db-wal
+*.db-shm
 .DS_Store
 session_string.txt
+session.txt
+*.session

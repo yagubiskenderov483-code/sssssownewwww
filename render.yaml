@@ -1,0 +1,23 @@
+services:
+  - type: worker
+    name: nft-deal-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: BOT_TOKEN
+        sync: false       # обязательно задать вручную в Render → Environment
+      - key: DB_PATH
+        value: /var/data/deals.db   # для Persistent Disk; иначе data пропадёт при редеплое
+      - key: OFFER_TTL_HOURS
+        value: "6"
+      - key: LOG_LEVEL
+        value: INFO
+    # ВАЖНО: подключите Persistent Disk на /var/data, иначе SQLite-база
+    # обнулится при каждом деплое и баг «Принять зависает» вернётся.
+    disk:
+      name: deals-db
+      mountPath: /var/data
+      sizeGB: 1
