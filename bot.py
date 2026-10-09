@@ -311,16 +311,21 @@ async def on_decline(cb: CallbackQuery):
     if not meta:
         return
     try:
-        await bot.edit_message_text(
+        await bot.delete_business_messages(
+            business_connection_id=meta["bcid"],
+            message_ids=[meta["msg_id"]],
+        )
+    except Exception as e:
+        logging.error(f"decline del: {e}")
+    try:
+        await bot.send_message(
             chat_id=meta["chat_id"],
-            message_id=meta["msg_id"],
             text=DECLINED_TEXT,
-            reply_markup=None,
             business_connection_id=meta["bcid"],
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
-    except TelegramBadRequest as e:
-        logging.error(f"decline: {e}")
+    except Exception as e:
+        logging.error(f"decline send: {e}")
     PENDING.pop(order_id, None)
     GIFT_INDEX.pop((meta["bcid"], meta["gift_slug"], meta["gift_num"]), None)
 
@@ -334,10 +339,18 @@ async def on_accept(cb: CallbackQuery):
         return
     if meta["state"] == "INSTRUCTION":
         return
+
     try:
-        await bot.edit_message_text(
+        await bot.delete_business_messages(
+            business_connection_id=meta["bcid"],
+            message_ids=[meta["msg_id"]],
+        )
+    except Exception as e:
+        logging.error(f"accept del: {e}")
+
+    try:
+        sent = await bot.send_message(
             chat_id=meta["chat_id"],
-            message_id=meta["msg_id"],
             text=build_instruction(
                 meta["amount"], meta["currency"],
                 meta["gift_name"], meta["gift_num"],
@@ -353,9 +366,10 @@ async def on_accept(cb: CallbackQuery):
                 show_above_text=True,
             ),
         )
+        meta["msg_id"] = sent.message_id
         meta["state"] = "INSTRUCTION"
-    except TelegramBadRequest as e:
-        logging.error(f"accept: {e}")
+    except Exception as e:
+        logging.error(f"accept send: {e}")
 
 
 @dp.callback_query(F.data.startswith("confirm:"))
@@ -370,16 +384,21 @@ async def on_confirm(cb: CallbackQuery):
         return
     await cb.answer()
     try:
-        await bot.edit_message_text(
+        await bot.delete_business_messages(
+            business_connection_id=meta["bcid"],
+            message_ids=[meta["msg_id"]],
+        )
+    except Exception as e:
+        logging.error(f"confirm del: {e}")
+    try:
+        await bot.send_message(
             chat_id=meta["chat_id"],
-            message_id=meta["msg_id"],
             text=build_accepted(meta["amount"], meta["currency"], order_id),
-            reply_markup=None,
             business_connection_id=meta["bcid"],
             link_preview_options=LinkPreviewOptions(is_disabled=True),
         )
-    except TelegramBadRequest as e:
-        logging.error(f"confirm: {e}")
+    except Exception as e:
+        logging.error(f"confirm send: {e}")
     PENDING.pop(order_id, None)
     GIFT_INDEX.pop((meta["bcid"], meta["gift_slug"], meta["gift_num"]), None)
 
