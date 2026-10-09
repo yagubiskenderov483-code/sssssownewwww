@@ -14,7 +14,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
-BOT_TOKEN = "8872388254:AAFZ7MM-qb9_fSLxuxOUL7yShPeqOPcPFrA"
+BOT_TOKEN = "8838053480:AAENb_8rzuMQmqSsAYuCI2l7SGP2bcfACS0"
 OFFER_TTL = 6 * 3600  # 6 часов в секундах
 TIMER_TICK = 300  # опрос раз в 5 минут
 TIMER_MIN_EDIT_GAP = 300  # редактировать сообщение не чаще раза в 5 минут
