@@ -14,7 +14,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 
-BOT_TOKEN = "8516600626:AAHkWQ2mdcqPfzR5gNe_a5uMfZB13y7P8-A"
+BOT_TOKEN = "8872388254:AAFZ7MM-qb9_fSLxuxOUL7yShPeqOPcPFrA"
 OFFER_TTL = 6 * 3600  # 6 часов в секундах
 TIMER_TICK = 300  # опрос раз в 5 минут
 TIMER_MIN_EDIT_GAP = 300  # редактировать сообщение не чаще раза в 5 минут
@@ -222,64 +222,32 @@ def get_recipient(bcid: str) -> tuple[str | None, int | None]:
 
 
 def parse_command(text):
+    """Простой парсер: только ссылка t.me/nft/... и число. Валюта: g = GRAM, иначе STARS."""
     if not text:
         return None
-    parts = text.strip().split()
-    if not parts:
+
+    # находим ссылку в любом месте текста
+    url_match = re.search(r"(https?://)?t\.me/nft/[A-Za-z]+-\d+", text)
+    if not url_match:
+        return None
+    link = url_match.group(0)
+    if not link.startswith("http"):
+        link = "https://" + link
+
+    # находим число (сумму) — любое целое или дробное
+    num_match = re.search(r"\b(\d+(?:[.,]\d+)?)\b", text.replace(url_match.group(0), ""))
+    if not num_match:
+        return None
+    try:
+        amount = int(float(num_match.group(1).replace(",", ".")))
+    except ValueError:
         return None
 
-    # дропаем префикс команды: /buy .buy !buy @bot buy — всё в утиль
-    first = parts[0].lstrip("/.!")
-    if first.lower() in CMD_WORDS or parts[0].startswith(("/", ".", "!")):
-        parts = parts[1:]
-    if parts and parts[0].startswith("@"):
-        parts = parts[1:]
-    # на случай ".buy" где первый токен сдроплен, но следом ещё "buy"
-    if parts and parts[0].lower() in CMD_WORDS:
-        parts = parts[1:]
-    if not parts:
-        return None
+    # валюта: ищем "g" или "gram" где-нибудь в тексте — тогда GRAM, иначе STARS
+    rest_low = text.lower().replace(url_match.group(0).lower(), "")
+    currency = "GRAM" if re.search(r"\b(g|gram|грам|грамм)\b", rest_low) else "STARS"
 
-    link, amount = None, None
-    currency, lang = "STARS", "ru"
-
-    for p in parts:
-        low = p.lower()
-        if link is None and (p.startswith("http") or p.startswith("t.me") or "t.me/" in p):
-            link = p if p.startswith("http") else f"https://{p}"
-            continue
-        if low in LANG_TAGS:
-            if low == "ru":
-                lang = "ru"
-            elif low in ("ukr", "uk"):
-                lang = "ukr"
-            elif low in ("eng", "en"):
-                lang = "eng"
-            elif low in ("cn", "zh"):
-                lang = "cn"
-            continue
-        if low in ("g", "gram", "грам", "грамм"):
-            currency = "GRAM"
-            continue
-        if low in ("s", "stars", "star", "звёзд", "звезд", "звёзды", "звезды"):
-            currency = "STARS"
-            continue
-        if amount is None:
-            # поддержка "817g" / "817s" слитно: число+суффикс валюты
-            m = re.fullmatch(r"(\d+(?:[.,]\d+)?)([gs]?)", low)
-            if m:
-                try:
-                    amount = int(float(m.group(1).replace(",", ".")))
-                    if m.group(2) == "g":
-                        currency = "GRAM"
-                    elif m.group(2) == "s":
-                        currency = "STARS"
-                except ValueError:
-                    pass
-
-    if not link or amount is None:
-        return None
-    return link, amount, currency, lang
+    return link, amount, currency, "ru"
 
 
 def parse_gift(link):
@@ -573,13 +541,6 @@ async def _handle_business_message_inner(message: Message):
     username, user_id = get_recipient(bcid)
     if not username and not user_id:
         logging.warning(f"no owner info for bcid={bcid}, skipping offer")
-        return
-
-    # команду .buy могут писать ТОЛЬКО сам владелец бизнес-аккаунта
-    # собеседник пишет — игнорим, его .buy не триггерит оффер
-    sender_id = message.from_user.id if message.from_user else None
-    if user_id and sender_id and sender_id != user_id:
-        logging.info(f"ignoring .buy from non-owner (sender={sender_id}, owner={user_id})")
         return
 
     link, amount, currency, lang = parsed
