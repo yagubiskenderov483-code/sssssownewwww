@@ -5,7 +5,8 @@ Pure business logic — без aiogram. Тестируется без Telegram-�
 * Парсинг команд и NFT-ссылок.
 * SQLite-персистентность (PENDING, BIZ_OWNERS, GIFT_INDEX).
 * Атомарные CAS-переходы state.
-* Проверка владельца Business Connection.
+* Проверка владельца Business Connection (с snapshot seller_user_id в самой
+  записи PENDING — не зависит от того, живёт ли biz_owners после рестарта).
 * Генерация текстов — без ложных упоминаний «эскроу» и «зачислений».
 
 bot.py импортирует этот модуль и подключает к aiogram.
@@ -53,6 +54,33 @@ def oid() -> str:
 _db: Optional[sqlite3.Connection] = None
 
 
+def _migrate(c: sqlite3.Connection) -> None:
+    """Добавляем новые колонки к существующей таблице pending.
+
+    Нужно, когда v1 схема (seller_user_id/buyer_* отсутствуют) уже лежит на
+    Persistent Disk с реальными офферами — ронять их нельзя.
+    """
+    cols = {row["name"] for row in c.execute("PRAGMA table_info(pending)").fetchall()}
+    for col, typ in (
+        ("seller_user_id", "INTEGER"),
+        ("seller_username", "TEXT"),
+        ("buyer_user_id", "INTEGER"),
+        ("buyer_username", "TEXT"),
+    ):
+        if col not in cols:
+            c.execute(f"ALTER TABLE pending ADD COLUMN {col} {typ}")
+
+    # Если в v1 были офферы, в них username/user_id содержало seller-данные
+    # (из BIZ_OWNERS). Копируем их в новые seller_* поля, если ещё пусто.
+    if "username" in cols and "user_id" in cols:
+        c.execute("""
+            UPDATE pending
+               SET seller_user_id = COALESCE(seller_user_id, user_id),
+                   seller_username = COALESCE(seller_username, username)
+             WHERE seller_user_id IS NULL
+        """)
+
+
 def db_init(path: str) -> sqlite3.Connection:
     global _db
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +103,10 @@ def db_init(path: str) -> sqlite3.Connection:
             nft_url           TEXT NOT NULL,
             username          TEXT,
             user_id           INTEGER,
+            seller_user_id    INTEGER,
+            seller_username   TEXT,
+            buyer_user_id     INTEGER,
+            buyer_username    TEXT,
             state             TEXT NOT NULL,
             gift_transferred  INTEGER NOT NULL DEFAULT 0,
             created_ts        INTEGER NOT NULL
@@ -91,6 +123,7 @@ def db_init(path: str) -> sqlite3.Connection:
             enabled  INTEGER NOT NULL DEFAULT 1
         );
     """)
+    _migrate(_db)
     return _db
 
 
@@ -143,8 +176,24 @@ def biz_get(bcid: str) -> Optional[dict]:
 
 
 def is_bc_owner(bcid: str, user_id: int) -> bool:
+    """Проверка владельца BC по таблице biz_owners.
+
+    Для callback-хендлеров ПРЕДПОЧТИТЕЛЬНО использовать is_order_seller(),
+    потому что seller_user_id сохраняется прямо в PENDING и не зависит
+    от того, живёт ли biz_owners (biz_connection event может быть пропущен
+    после рестарта, пока seller сам не переподключит бота).
+    """
     row = biz_get(bcid)
     return bool(row and row["enabled"] and row["user_id"] == user_id)
+
+
+def is_order_seller(order_id: str, user_id: int) -> bool:
+    """Проверка владельца сделки по snapshot в PENDING."""
+    row = _conn().execute(
+        "SELECT seller_user_id FROM pending WHERE order_id=?",
+        (order_id,),
+    ).fetchone()
+    return bool(row and row["seller_user_id"] == user_id)
 
 
 def pending_insert(meta: dict) -> None:
@@ -152,13 +201,21 @@ def pending_insert(meta: dict) -> None:
         c.execute(
             """INSERT INTO pending(order_id, chat_id, msg_id, bcid,
                                    amount, currency, gift_name, gift_num,
-                                   gift_slug, nft_url, username, user_id,
+                                   gift_slug, nft_url,
+                                   username, user_id,
+                                   seller_user_id, seller_username,
+                                   buyer_user_id, buyer_username,
                                    state, gift_transferred, created_ts)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 meta["order_id"], meta["chat_id"], meta["msg_id"], meta["bcid"],
                 meta["amount"], meta["currency"], meta["gift_name"], meta["gift_num"],
-                meta["gift_slug"], meta["nft_url"], meta["username"], meta["user_id"],
+                meta["gift_slug"], meta["nft_url"],
+                # Legacy поля — дублируем в них seller для обратной совместимости
+                # (если какая-то старая строчка кода читает "username"/"user_id").
+                meta.get("seller_username"), meta.get("seller_user_id"),
+                meta.get("seller_user_id"), meta.get("seller_username"),
+                meta.get("buyer_user_id"), meta.get("buyer_username"),
                 STATE_OFFER, 0, int(time.time()),
             ),
         )
@@ -177,6 +234,17 @@ def pending_find_by_gift(bcid: str, slug: str, num: str) -> Optional[dict]:
         (bcid, slug, num, STATE_OFFER, STATE_INSTRUCTION),
     ).fetchone()
     return dict(row) if row else None
+
+
+def pending_find_active_by_bcid(bcid: str) -> list[dict]:
+    """Все активные (не финальные) офферы в данном BC — для детекции передачи
+    без текста, когда мы не можем определить какой именно подарок передан."""
+    rows = _conn().execute(
+        """SELECT * FROM pending
+           WHERE bcid=? AND state=? ORDER BY created_ts DESC""",
+        (bcid, STATE_INSTRUCTION),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def pending_cas_state(order_id: str, from_state: str, to_state: str) -> bool:
@@ -215,6 +283,16 @@ def pending_gc_finalized(max_age_seconds: int = 7 * 24 * 3600) -> int:
             (STATE_CONFIRMED, STATE_DECLINED, STATE_EXPIRED, cutoff),
         )
         return cur.rowcount
+
+
+def pending_distinct_bcids() -> list[str]:
+    """BC ID из всех активных офферов — используется на старте бота, чтобы
+    восстановить biz_owners через API, если event не придёт."""
+    rows = _conn().execute(
+        "SELECT DISTINCT bcid FROM pending WHERE state IN (?,?)",
+        (STATE_OFFER, STATE_INSTRUCTION),
+    ).fetchall()
+    return [r["bcid"] for r in rows]
 
 
 # ── Парсинг ───────────────────────────────────────────────────────────────
@@ -284,9 +362,10 @@ def build_offer_linked(amount, currency, gift_name, gift_num, url) -> str:
 
 
 def build_instruction(amount, currency, gift_name, gift_num, order_id,
-                      username, user_id, nft_url) -> str:
-    rec = f"@{username}" if username else (
-        f'<a href="tg://user?id={user_id}">покупателю</a>' if user_id else "—"
+                      buyer_username, buyer_user_id, nft_url) -> str:
+    """Инструкция для продавца. Получатель подарка — buyer (не seller!)."""
+    rec = f"@{buyer_username}" if buyer_username else (
+        f'<a href="tg://user?id={buyer_user_id}">покупателю</a>' if buyer_user_id else "—"
     )
     gift_link = f'<b><a href="{nft_url}">{gift_name} #{gift_num}</a></b>'
     return (
@@ -349,7 +428,6 @@ def decide_accept(order_id: str, caller_id: int) -> tuple[str, Optional[dict]]:
     Возвращает (action, meta|None).
     action ∈ {"session_lost", "already_instruction", "already_final",
               "not_owner", "cas_lost", "edit", "ok"}.
-    При "edit" meta содержит данные для построения instruction-сообщения.
     """
     meta = pending_get(order_id)
     if not meta:
@@ -358,7 +436,7 @@ def decide_accept(order_id: str, caller_id: int) -> tuple[str, Optional[dict]]:
         return ("already_instruction", meta)
     if meta["state"] in FINAL_STATES:
         return ("already_final", meta)
-    if not is_bc_owner(meta["bcid"], caller_id):
+    if not is_order_seller(order_id, caller_id):
         return ("not_owner", meta)
     if not pending_cas_state(order_id, STATE_OFFER, STATE_INSTRUCTION):
         return ("cas_lost", meta)
@@ -371,7 +449,7 @@ def decide_decline(order_id: str, caller_id: int) -> tuple[str, Optional[dict]]:
         return ("session_lost", None)
     if meta["state"] in FINAL_STATES:
         return ("already_final", meta)
-    if not is_bc_owner(meta["bcid"], caller_id):
+    if not is_order_seller(order_id, caller_id):
         return ("not_owner", meta)
     if meta["state"] != STATE_OFFER:
         return ("wrong_state", meta)
@@ -381,6 +459,17 @@ def decide_decline(order_id: str, caller_id: int) -> tuple[str, Optional[dict]]:
 
 
 def decide_confirm(order_id: str, caller_id: int) -> tuple[str, Optional[dict]]:
+    """
+    Решение по кнопке «Подтвердить передачу».
+
+    В отличие от предыдущей версии, НЕ требует gift_transferred=1: это
+    явное действие продавца. Автоматическая детекция передачи подарка
+    через текст business_message крайне ненадёжна — передача unique_gift
+    через нативный UI Telegram генерирует service-message без текста
+    с nft-ссылкой, и наш детектор её не распознаёт.
+
+    Проверка остаётся по-прежнему строгой на точке владельца и статуса.
+    """
     meta = pending_get(order_id)
     if not meta:
         return ("session_lost", None)
@@ -388,10 +477,8 @@ def decide_confirm(order_id: str, caller_id: int) -> tuple[str, Optional[dict]]:
         return ("already_final", meta)
     if meta["state"] != STATE_INSTRUCTION:
         return ("not_accepted_yet", meta)
-    if not is_bc_owner(meta["bcid"], caller_id):
+    if not is_order_seller(order_id, caller_id):
         return ("not_owner", meta)
-    if not meta.get("gift_transferred"):
-        return ("not_transferred", meta)
     if not pending_cas_state(order_id, STATE_INSTRUCTION, STATE_CONFIRMED):
         return ("cas_lost", meta)
     return ("edit", meta)
