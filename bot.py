@@ -20,7 +20,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BusinessConnection,
     CallbackQuery,
@@ -42,6 +42,9 @@ if not BOT_TOKEN:
 
 DB_PATH = os.environ.get("DB_PATH", "deals.db")
 GC_PERIOD = int(os.environ.get("GC_PERIOD_SECONDS", "300"))
+# ADMIN_ID — опционально; получит ответ на /diag и stdout-пинг при ошибках
+_ADMIN_RAW = os.environ.get("ADMIN_ID", "").strip()
+ADMIN_ID: int | None = int(_ADMIN_RAW) if _ADMIN_RAW.isdigit() else None
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -74,23 +77,51 @@ def kb_instruction(order_id, buyer_username, buyer_user_id) -> InlineKeyboardMar
     ])
 
 
+# ── Классификация TelegramBadRequest ────────────────────────────────────
+def _classify_tg_error(e: Exception) -> str:
+    """Возвращает человекочитаемое сообщение для alert по тексту ошибки.
+
+    Telegram API возвращает очень разные ошибки для бизнес-сообщений;
+    без разбора пользователь видит «Ошибка Telegram API» и не понимает
+    что делать. Распарсим типичные.
+    """
+    msg = str(e).upper()
+    if "MESSAGE_NOT_MODIFIED" in msg:
+        return ""  # игнор, не ошибка
+    if "MESSAGE_TO_EDIT_NOT_FOUND" in msg or "MESSAGE TO EDIT NOT FOUND" in msg:
+        return ("Сообщение с кнопкой удалено или устарело. "
+                "Попросите покупателя создать новое предложение.")
+    if "BUSINESS_CONNECTION_NOT_FOUND" in msg or "BUSINESS_CONNECTION_INVALID" in msg:
+        return ("Бот отключён от Business-аккаунта. "
+                "Переподключите его в Telegram → Настройки → Telegram "
+                "для бизнеса → Чат-боты.")
+    if "BOT_WAS_BLOCKED" in msg or "USER_IS_BLOCKED" in msg:
+        return "Покупатель заблокировал бота или вас."
+    if "CHAT_NOT_FOUND" in msg:
+        return "Чат не найден — он мог быть удалён."
+    if "MESSAGE_AUTHOR_REQUIRED" in msg:
+        return ("Нет прав на редактирование сообщения. "
+                "В настройках бота для бизнес-аккаунта должно быть разрешено "
+                "«Отвечать на сообщения» и бот должен быть автором сообщения.")
+    if "FORBIDDEN" in msg or "NOT ENOUGH RIGHTS" in msg:
+        return ("Недостаточно прав у бота в этом Business-аккаунте. "
+                "Проверьте разрешения в настройках бота для бизнеса.")
+    return "Ошибка Telegram API, попробуйте ещё раз через минуту."
+
+
 # ── Business connection ──────────────────────────────────────────────────
 @dp.business_connection()
 async def handle_business_connection(bc: BusinessConnection):
     C.biz_set(bc.id, bc.user.id, bc.user.username, bool(bc.is_enabled))
-    log.info("biz_conn %s id=%s user_id=%s username=@%s",
-             "ON" if bc.is_enabled else "OFF", bc.id, bc.user.id, bc.user.username)
+    # Логируем права, которые юзер дал боту — полезно для диагностики.
+    rights = getattr(bc, "rights", None)
+    log.info("biz_conn %s id=%s user_id=%s username=@%s rights=%s",
+             "ON" if bc.is_enabled else "OFF", bc.id, bc.user.id, bc.user.username,
+             rights)
 
 
 # ── Business message ─────────────────────────────────────────────────────
 def _extract_gift_ref(message: Message):
-    """Пробуем вытащить ссылку на подарок из структурированных полей или текста.
-
-    ВАЖНО: эта функция может ничего не найти в случае передачи unique_gift
-    через нативный Telegram UI — там прилетает service message без текста
-    с nft-ссылкой. Поэтому `gift_transferred` в core НЕ используется как
-    блокировка подтверждения передачи; это лишь мягкий индикатор.
-    """
     for attr in ("unique_gift", "gift"):
         obj = getattr(message, attr, None)
         if obj is None:
@@ -113,16 +144,6 @@ def _extract_gift_ref(message: Message):
 
 
 async def _ensure_biz_owner(bcid: str) -> dict | None:
-    """Гарантируем, что для bcid есть запись в biz_owners.
-
-    1) Если есть enabled → возвращаем.
-    2) Иначе пробуем get_business_connection через API.
-    3) Если и это не удалось — None, caller решает что делать.
-
-    Эта функция КРИТИЧНА после рестарта: business_connection events
-    Telegram НЕ переигрывает, поэтому единственный путь восстановить
-    запись — явный API-fetch по bcid.
-    """
     info = C.biz_get(bcid)
     if info and info["enabled"]:
         return info
@@ -136,18 +157,140 @@ async def _ensure_biz_owner(bcid: str) -> dict | None:
     return C.biz_get(bcid)
 
 
+# ── Текстовый fallback для кнопок ───────────────────────────────────────
+# Если по какой-то причине callback_query от кнопок не доходит до бота
+# (24h-окно Business, ошибка Telegram, кэш клиента), продавец может
+# прислать в свой business-чат команду `.accept TG-XXXXXXXXXX` и
+# бот выполнит то же самое что сделала бы кнопка. Этот fallback всегда
+# ВКЛ и является официальным альтернативным способом управления.
+_TEXT_CMD_RE = __import__("re").compile(
+    r"^\s*\.(accept|decline|confirm)\s+(TG-[A-Z0-9]{10})\s*$",
+    __import__("re").IGNORECASE,
+)
+
+
+async def _execute_text_command(action: str, order_id: str,
+                                 caller_id: int, bcid: str) -> str:
+    """Исполняет текстовую команду. Возвращает человекочитаемый итог."""
+    action = action.lower()
+    if action == "accept":
+        act, meta = C.decide_accept(order_id, caller_id)
+    elif action == "decline":
+        act, meta = C.decide_decline(order_id, caller_id)
+    elif action == "confirm":
+        act, meta = C.decide_confirm(order_id, caller_id)
+    else:
+        return f"Неизвестная команда: {action}"
+    log.info("text_cmd %s order=%s from=%s action=%s",
+             action, order_id, caller_id, act)
+    if act == "session_lost":
+        return "Этот ордер не найден."
+    if act in ("already_instruction", "already_final"):
+        return "Эта сделка уже обработана."
+    if act == "not_owner":
+        return "Это действие доступно только продавцу."
+    if act == "wrong_state":
+        return "Нельзя отклонить уже принятое."
+    if act == "not_accepted_yet":
+        return "Сначала примите предложение."
+    if act == "cas_lost":
+        return "Состояние изменилось, попробуйте снова."
+    if act != "edit":
+        return f"Неожиданное состояние: {act}"
+    # action == "edit": делаем edit
+    try:
+        if action == "accept":
+            await bot.edit_message_text(
+                chat_id=meta["chat_id"], message_id=meta["msg_id"],
+                text=C.build_instruction(
+                    meta["amount"], meta["currency"],
+                    meta["gift_name"], meta["gift_num"], order_id,
+                    meta.get("buyer_username"), meta.get("buyer_user_id"),
+                    meta["nft_url"],
+                ),
+                reply_markup=kb_instruction(
+                    order_id, meta.get("buyer_username"), meta.get("buyer_user_id"),
+                ),
+                business_connection_id=meta["bcid"],
+                link_preview_options=LinkPreviewOptions(
+                    is_disabled=False, prefer_large_media=True, show_above_text=True,
+                ),
+            )
+            return "✓ Принято."
+        if action == "decline":
+            await bot.edit_message_text(
+                chat_id=meta["chat_id"], message_id=meta["msg_id"],
+                text=C.DECLINED_TEXT, reply_markup=None,
+                business_connection_id=meta["bcid"],
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
+            )
+            return "✓ Отклонено."
+        # confirm
+        await bot.edit_message_text(
+            chat_id=meta["chat_id"], message_id=meta["msg_id"],
+            text=C.build_accepted(meta["amount"], meta["currency"], order_id),
+            reply_markup=None,
+            business_connection_id=meta["bcid"],
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
+        return "✓ Подтверждено."
+    except TelegramBadRequest as e:
+        # Откат state
+        rollback_map = {
+            "accept": (C.STATE_INSTRUCTION, C.STATE_OFFER),
+            "decline": (C.STATE_DECLINED, C.STATE_OFFER),
+            "confirm": (C.STATE_CONFIRMED, C.STATE_INSTRUCTION),
+        }
+        frm, to = rollback_map[action]
+        C.pending_cas_state(order_id, frm, to)
+        hint = _classify_tg_error(e) or "edit прошёл."
+        log.error("text_cmd %s edit order=%s: %s", action, order_id, e)
+        return f"✗ {hint}"
+
+
 @dp.business_message(F.text)
 async def handle_business_message(message: Message):
     bcid = message.business_connection_id
     if not bcid:
         return
+    text = message.text or ""
     log.info("business_message chat=%s from=%s bcid=%s text=%r",
              message.chat.id, message.from_user.id if message.from_user else None,
-             bcid, (message.text or "")[:80])
+             bcid, text[:80])
 
-    # Если это сообщение фиксирует факт передачи ранее принятого оффера —
-    # помечаем gift_transferred=1 (это только для информации, не блокирует
-    # подтверждение).
+    # 1) Текстовая команда управления от продавца (fallback вместо кнопок)
+    m = _TEXT_CMD_RE.match(text)
+    if m:
+        action, order_id = m.group(1), m.group(2).upper()
+        caller_id = message.from_user.id if message.from_user else 0
+        # Защита: команда должна прийти ОТ владельца BC
+        if not C.is_order_seller(order_id, caller_id):
+            # Проверим fallback через biz_owners
+            await _ensure_biz_owner(bcid)
+            if not C.is_bc_owner(bcid, caller_id):
+                log.warning("text_cmd rejected: caller=%s not seller for order=%s",
+                            caller_id, order_id)
+                try:
+                    await bot.send_message(
+                        chat_id=message.chat.id,
+                        text="⚠️ Эта команда доступна только продавцу.",
+                        business_connection_id=bcid,
+                    )
+                except Exception:
+                    pass
+                return
+        result = await _execute_text_command(action, order_id, caller_id, bcid)
+        try:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                text=result,
+                business_connection_id=bcid,
+            )
+        except Exception as e:
+            log.error("text_cmd reply failed: %s", e)
+        return
+
+    # 2) Soft-детектор передачи подарка
     ref = _extract_gift_ref(message)
     if ref:
         slug, num = ref
@@ -155,10 +298,9 @@ async def handle_business_message(message: Message):
         if pending and pending["state"] == C.STATE_INSTRUCTION:
             C.pending_mark_transferred(pending["order_id"])
             log.info("gift_transferred (soft) order=%s", pending["order_id"])
-            # Не return — вдруг buyer в одном сообщении и подарок передал,
-            # и новый оффер прислал. Хотя на практике маловероятно.
 
-    parsed = C.parse_command(message.text or "")
+    # 3) Новый оффер
+    parsed = C.parse_command(text)
     if not parsed:
         return
     link, amount, currency = parsed
@@ -173,7 +315,6 @@ async def handle_business_message(message: Message):
     seller_user_id = seller_info["user_id"]
     seller_username = seller_info["username"]
 
-    # Покупатель — автор сообщения.
     buyer = message.from_user
     buyer_user_id = buyer.id if buyer else None
     buyer_username = buyer.username if buyer else None
@@ -209,7 +350,6 @@ async def handle_business_message(message: Message):
     log.info("offer_created order=%s seller=%s buyer=%s gift=%s-%s amount=%s",
              order_id, seller_user_id, buyer_user_id, slug, gift_num, amount)
 
-    # Второй edit — только для превью. Если упадёт — оффер уже работает.
     await asyncio.sleep(1.0)
     try:
         await bot.edit_message_text(
@@ -241,18 +381,29 @@ async def handle_edited_business(message: Message):
 
 # ── Callback handlers ───────────────────────────────────────────────────
 async def _safe_answer(cb: CallbackQuery, text: str = "", show_alert: bool = False):
-    """cb.answer с подавлением исключений — чтобы ветка exit никогда не падала."""
     try:
         await cb.answer(text, show_alert=show_alert)
     except Exception as e:
         log.warning("cb.answer failed id=%s: %s", cb.id, e)
 
 
+def _cb_bcid(cb: CallbackQuery) -> str | None:
+    """Пытаемся получить bcid из callback_query — для диагностики."""
+    bcid = getattr(cb, "business_connection_id", None)
+    if bcid:
+        return bcid
+    msg = getattr(cb, "message", None)
+    if msg is not None:
+        return getattr(msg, "business_connection_id", None)
+    return None
+
+
 @dp.callback_query(F.data.startswith("decline:"))
 async def on_decline(cb: CallbackQuery):
     data = cb.data or ""
     order_id = data.split(":", 1)[1] if ":" in data else ""
-    log.info("cb decline order=%s from=%s", order_id, cb.from_user.id)
+    log.info("cb decline order=%s from=%s cb_bcid=%s",
+             order_id, cb.from_user.id, _cb_bcid(cb))
     try:
         action, meta = C.decide_decline(order_id, cb.from_user.id)
         log.info("decide_decline order=%s action=%s", order_id, action)
@@ -266,7 +417,6 @@ async def on_decline(cb: CallbackQuery):
             return await _safe_answer(cb, "Нельзя отклонить уже принятое.", show_alert=True)
         if action == "cas_lost":
             return await _safe_answer(cb, "Состояние изменилось.")
-        # action == "edit"
         try:
             await bot.edit_message_text(
                 chat_id=meta["chat_id"], message_id=meta["msg_id"],
@@ -275,8 +425,10 @@ async def on_decline(cb: CallbackQuery):
                 link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
         except TelegramBadRequest as e:
+            C.pending_cas_state(order_id, C.STATE_DECLINED, C.STATE_OFFER)
+            hint = _classify_tg_error(e)
             log.error("decline_edit order=%s: %s", order_id, e)
-            return await _safe_answer(cb, C.ERR_API, show_alert=True)
+            return await _safe_answer(cb, hint or C.ERR_API, show_alert=True)
         await _safe_answer(cb, "Отклонено.")
     except Exception:
         log.exception("on_decline crashed order=%s", order_id)
@@ -287,10 +439,9 @@ async def on_decline(cb: CallbackQuery):
 async def on_accept(cb: CallbackQuery):
     data = cb.data or ""
     order_id = data.split(":", 1)[1] if ":" in data else ""
-    log.info("cb accept order=%s from=%s", order_id, cb.from_user.id)
+    log.info("cb accept order=%s from=%s cb_bcid=%s",
+             order_id, cb.from_user.id, _cb_bcid(cb))
     try:
-        # На всякий случай — восстановить biz_owners из API, если пусто.
-        # Это НЕ блокирует: is_order_seller читает snapshot из pending.
         meta_preview = C.pending_get(order_id)
         if meta_preview:
             await _ensure_biz_owner(meta_preview["bcid"])
@@ -310,7 +461,6 @@ async def on_accept(cb: CallbackQuery):
             return await _safe_answer(cb, C.ERR_NOT_OWNER, show_alert=True)
         if action == "cas_lost":
             return await _safe_answer(cb, "Состояние изменилось, обновите чат.")
-        # action == "edit"
         try:
             await bot.edit_message_text(
                 chat_id=meta["chat_id"], message_id=meta["msg_id"],
@@ -331,10 +481,10 @@ async def on_accept(cb: CallbackQuery):
                 ),
             )
         except TelegramBadRequest as e:
-            # Откат state, иначе БД и UI разойдутся
             C.pending_cas_state(order_id, C.STATE_INSTRUCTION, C.STATE_OFFER)
+            hint = _classify_tg_error(e)
             log.error("accept_edit order=%s: %s", order_id, e)
-            return await _safe_answer(cb, C.ERR_API, show_alert=True)
+            return await _safe_answer(cb, hint or C.ERR_API, show_alert=True)
         await _safe_answer(cb, "Принято.")
     except Exception:
         log.exception("on_accept crashed order=%s", order_id)
@@ -345,7 +495,8 @@ async def on_accept(cb: CallbackQuery):
 async def on_confirm(cb: CallbackQuery):
     data = cb.data or ""
     order_id = data.split(":", 1)[1] if ":" in data else ""
-    log.info("cb confirm order=%s from=%s", order_id, cb.from_user.id)
+    log.info("cb confirm order=%s from=%s cb_bcid=%s",
+             order_id, cb.from_user.id, _cb_bcid(cb))
     try:
         action, meta = C.decide_confirm(order_id, cb.from_user.id)
         log.info("decide_confirm order=%s action=%s", order_id, action)
@@ -359,7 +510,6 @@ async def on_confirm(cb: CallbackQuery):
             return await _safe_answer(cb, C.ERR_NOT_OWNER, show_alert=True)
         if action == "cas_lost":
             return await _safe_answer(cb, "Состояние изменилось, обновите чат.")
-        # action == "edit"
         try:
             await bot.edit_message_text(
                 chat_id=meta["chat_id"], message_id=meta["msg_id"],
@@ -370,25 +520,70 @@ async def on_confirm(cb: CallbackQuery):
             )
         except TelegramBadRequest as e:
             C.pending_cas_state(order_id, C.STATE_CONFIRMED, C.STATE_INSTRUCTION)
+            hint = _classify_tg_error(e)
             log.error("confirm_edit order=%s: %s", order_id, e)
-            return await _safe_answer(cb, C.ERR_API, show_alert=True)
+            return await _safe_answer(cb, hint or C.ERR_API, show_alert=True)
         await _safe_answer(cb, "Подтверждено.")
     except Exception:
         log.exception("on_confirm crashed order=%s", order_id)
         await _safe_answer(cb, C.ERR_API, show_alert=True)
 
 
-# Fallback — ловим любой нераспознанный callback_query, чтобы спиннер
-# у пользователя не висел бесконечно.
 @dp.callback_query()
 async def on_unknown_callback(cb: CallbackQuery):
-    log.warning("callback not matched: data=%r from=%s", cb.data, cb.from_user.id)
+    log.warning("callback not matched: data=%r from=%s cb_bcid=%s",
+                cb.data, cb.from_user.id, _cb_bcid(cb))
     await _safe_answer(cb, "Неизвестная команда — обновите чат.", show_alert=True)
 
 
+# ── /start и /diag ──────────────────────────────────────────────────────
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(C.START_TEXT)
+
+
+@dp.message(Command("diag"))
+async def cmd_diag(message: Message):
+    """Диагностика для админа — показывает состояние БД в Telegram.
+
+    Доступно только тому user_id, который задан в env ADMIN_ID.
+    """
+    if ADMIN_ID is None or (message.from_user and message.from_user.id != ADMIN_ID):
+        return  # молча игнорируем
+    try:
+        bcids = C._conn().execute(
+            "SELECT bcid, user_id, enabled FROM biz_owners LIMIT 20"
+        ).fetchall()
+        pend = C._conn().execute(
+            """SELECT order_id, bcid, state, seller_user_id, buyer_user_id,
+                      gift_slug, gift_num, amount, currency,
+                      datetime(created_ts,'unixepoch') AS created
+               FROM pending ORDER BY created_ts DESC LIMIT 10"""
+        ).fetchall()
+        lines = [
+            "<b>Diag</b>",
+            f"DB_PATH: <code>{DB_PATH}</code>",
+            f"TTL_HOURS: {C.TTL_HOURS}",
+            "",
+            f"<b>biz_owners</b> ({len(bcids)}):",
+        ]
+        for r in bcids:
+            lines.append(
+                f"  bcid=<code>{r['bcid']}</code> user={r['user_id']} enabled={r['enabled']}"
+            )
+        lines.append("")
+        lines.append(f"<b>pending</b> (last {len(pend)}):")
+        for r in pend:
+            lines.append(
+                f"  <code>{r['order_id']}</code> {r['state']} "
+                f"seller={r['seller_user_id']} buyer={r['buyer_user_id']} "
+                f"gift={r['gift_slug']}-{r['gift_num']} "
+                f"{r['amount']} {r['currency']} ({r['created']})"
+            )
+        await message.answer("\n".join(lines) or "пусто")
+    except Exception as e:
+        log.exception("diag failed")
+        await message.answer(f"diag error: {e}")
 
 
 # ── Фоновая задача истечения ─────────────────────────────────────────────
@@ -415,9 +610,6 @@ async def expire_loop():
 
 
 async def recover_biz_owners_from_pending():
-    """На старте пробуем для каждого bcid активных офферов восстановить
-    запись в biz_owners через API. Нужно потому что business_connection
-    events не переигрываются после рестарта."""
     bcids = C.pending_distinct_bcids()
     if not bcids:
         return
@@ -434,7 +626,8 @@ async def recover_biz_owners_from_pending():
 
 # ── main ─────────────────────────────────────────────────────────────────
 async def main():
-    log.info("starting; DB_PATH=%s TTL_HOURS=%s", DB_PATH, C.TTL_HOURS)
+    log.info("starting; DB_PATH=%s TTL_HOURS=%s ADMIN_ID=%s",
+             DB_PATH, C.TTL_HOURS, ADMIN_ID)
     C.db_init(DB_PATH)
     try:
         me = await bot.get_me()
